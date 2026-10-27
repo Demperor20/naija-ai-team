@@ -314,19 +314,19 @@ export async function applyDecision(
       inserted = await approveProducts(companyId, ids);
       break;
     }
-    case "catalogue": {
+    case "catalogue":
+    case "flyer": {
       const payload = decision.payload as Record<string, unknown> | null;
       const id =
         typeof payload?.file_id === "string" ? payload.file_id : "";
-      if (!id) throw new Error("catalogue proposal has no file_id.");
+      if (!id) throw new Error(`${kind} proposal has no file_id.`);
       const ok = await setFileApproved(companyId, id);
-      if (!ok) throw new Error("catalogue file not found for this company.");
+      if (!ok) throw new Error(`${kind} file not found for this company.`);
       fileId = id;
       break;
     }
-    // TODO (Day 5/6) — kinds "flyer" | "video": same file-approval as
-    // catalogue; on WhatsApp, send the file to the owner ready to forward
-    // or post.
+    // TODO (Day 6) — kind "video": same file-approval as catalogue; on
+    // WhatsApp, send the file to the owner ready to forward or post.
     // TODO (Day 7) — kind "statement": same file-approval as catalogue for
     // the statement PDF.
     default:

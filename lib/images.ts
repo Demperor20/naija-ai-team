@@ -144,6 +144,79 @@ function fitText(
   return `${clipped}…`;
 }
 
+// Greedy word wrap to at most maxLines; an ellipsis marks dropped words.
+function wrapLines(
+  font: opentype.Font,
+  text: string,
+  fontSize: number,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  const fits = (s: string): boolean =>
+    font.getAdvanceWidth(s, fontSize, { kerning: true }) <= maxWidth;
+  const lines: string[] = [];
+  let current = "";
+  let truncated = false;
+  for (const word of words) {
+    const trial = current ? `${current} ${word}` : word;
+    if (fits(trial)) {
+      current = trial;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = "";
+    if (lines.length >= maxLines) {
+      truncated = true;
+      break;
+    }
+    current = word;
+  }
+  if (current) {
+    if (lines.length < maxLines) lines.push(current);
+    else truncated = true;
+  }
+  const out = lines.slice(0, maxLines);
+  if (truncated && out.length > 0 && !out[out.length - 1].endsWith("…")) {
+    out[out.length - 1] = `${out[out.length - 1]}…`;
+  }
+  return out.map((l) => fitText(font, l, fontSize, maxWidth));
+}
+
+// Largest size at which text fits one line; clips only past the smallest.
+function shrinkToFit(
+  font: opentype.Font,
+  text: string,
+  sizes: number[],
+  maxWidth: number,
+): { text: string; size: number } {
+  for (const size of sizes) {
+    if (font.getAdvanceWidth(text, size, { kerning: true }) <= maxWidth) {
+      return { text, size };
+    }
+  }
+  const size = sizes[sizes.length - 1];
+  return { text: fitText(font, text, size, maxWidth), size };
+}
+
+// Largest size at which text wraps without dropping words.
+function shrinkWrap(
+  font: opentype.Font,
+  text: string,
+  sizes: number[],
+  maxWidth: number,
+  maxLines: number,
+): { lines: string[]; size: number } {
+  for (const size of sizes) {
+    const lines = wrapLines(font, text, size, maxWidth, maxLines);
+    if (lines.length === 0 || !lines[lines.length - 1].endsWith("…")) {
+      return { lines, size };
+    }
+  }
+  const size = sizes[sizes.length - 1];
+  return { lines: wrapLines(font, text, size, maxWidth, maxLines), size };
+}
+
 // --- Segmentation input ------------------------------------------------------
 
 export async function resizeForSegment(
@@ -318,10 +391,6 @@ const PAGE_H = 1350;
 const MARGIN = 60;
 const MAX_PRODUCTS = 6;
 
-function escapeXml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-}
-
 // Lays out approved products (cutout, name, price) in a grid, 1080x1350.
 export async function renderCatalogue(
   args: CatalogueArgs,
@@ -359,7 +428,7 @@ export async function renderCatalogue(
     texts.push(
       textPath(
         workSans(),
-        escapeXml(fitText(workSans(), p.name, 36, cardW - 48)),
+        (fitText(workSans(), p.name, 36, cardW - 48)),
         cx,
         y + imageH + 62,
         36,
@@ -373,7 +442,7 @@ export async function renderCatalogue(
     texts.push(
       textPath(
         workSans(),
-        escapeXml(priceText),
+        (priceText),
         cx,
         y + imageH + 112,
         p.price === null ? 30 : 40,
@@ -391,10 +460,10 @@ export async function renderCatalogue(
   );
   const headerSvg =
     `<rect x="${MARGIN}" y="150" width="${PAGE_W - MARGIN * 2}" height="6" fill="${brand.accent}"/>` +
-    textPath(anton(), escapeXml(headerName), PAGE_W / 2, 118, 76, brand.ink);
+    textPath(anton(), (headerName), PAGE_W / 2, 118, 76, brand.ink);
   const footerSvg = textPath(
     workSans(),
-    escapeXml("Order on WhatsApp"),
+    ("Order on WhatsApp"),
     PAGE_W / 2,
     PAGE_H - 52,
     34,
@@ -451,4 +520,160 @@ export async function renderCatalogue(
     .png()
     .toBuffer();
   return { png, included: products.length, total };
+}
+
+// --- Flyer -------------------------------------------------------------------
+
+const FLYER_W = 1080;
+const FLYER_H = 1920;
+
+export interface FlyerWords {
+  headline: string;
+  offer: string;
+  price: string;
+  cta: string;
+  businessName: string;
+}
+
+export interface RenderFlyerArgs {
+  background: Buffer;
+  words: FlyerWords;
+  brand?: Partial<BrandColours>;
+}
+
+// 1080x1920 promo flyer: the generated background (cover-cropped) with our
+// own exact words on top. Dark gradient scrims behind the top and bottom
+// text keep every word readable on any background.
+export async function renderFlyer(args: RenderFlyerArgs): Promise<Buffer> {
+  const brand: BrandColours = { ...DEFAULT_BRAND, ...args.brand };
+  const { headline, offer, price, cta, businessName } = args.words;
+  const cx = FLYER_W / 2;
+  const maxW = FLYER_W - 160;
+  const white = "#ffffff";
+  const softWhite = "#e7e5e4";
+
+  const overlay: string[] = [
+    `<defs>` +
+      `<linearGradient id="flyTop" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0" stop-color="#000000" stop-opacity="0.66"/>` +
+      `<stop offset="1" stop-color="#000000" stop-opacity="0"/>` +
+      `</linearGradient>` +
+      `<linearGradient id="flyBottom" x1="0" y1="0" x2="0" y2="1">` +
+      `<stop offset="0" stop-color="#000000" stop-opacity="0"/>` +
+      `<stop offset="1" stop-color="#000000" stop-opacity="0.72"/>` +
+      `</linearGradient>` +
+      `</defs>`,
+    `<rect x="0" y="0" width="${FLYER_W}" height="640" fill="url(#flyTop)"/>`,
+    `<rect x="0" y="1020" width="${FLYER_W}" height="900" fill="url(#flyBottom)"/>`,
+  ];
+
+  // Headline: Anton, up to 2 lines, shrinking before clipping.
+  const headlineText = headline.trim() || "Special Offer";
+  const headlineFit = shrinkWrap(anton(), headlineText, [104, 88, 72], maxW, 2);
+  const headlineSize = headlineFit.size;
+  const headlineLines = headlineFit.lines;
+  let baseline = 190;
+  for (const line of headlineLines) {
+    overlay.push(
+      textPath(anton(), (line), cx, baseline, headlineSize, white),
+    );
+    baseline += Math.round(headlineSize * 1.04);
+  }
+  overlay.push(
+    `<rect x="${cx - 70}" y="${baseline - headlineSize * 0.72 + 26}" width="140" height="8" fill="${brand.accent}"/>`,
+  );
+
+  // Bottom stack: offer, price, CTA pill, business name.
+  let priceBaseline = 1560;
+  const offerFit =
+    offer.trim().length > 0
+      ? shrinkWrap(workSans(), offer.trim(), [50, 44, 38], maxW, 2)
+      : { lines: [] as string[], size: 50 };
+  const offerLines = offerFit.lines;
+  let offerBaseline = 1370;
+  for (const line of offerLines) {
+    overlay.push(
+      textPath(workSans(), line, cx, offerBaseline, offerFit.size, white),
+    );
+    offerBaseline += 60;
+  }
+  if (price.trim()) {
+    const priceFit = shrinkWrap(
+      anton(),
+      price.trim(),
+      [118, 100, 84, 72, 60, 48],
+      maxW,
+      2,
+    );
+    const priceSize = priceFit.size;
+    let lineBaseline = offerLines.length > 0 ? offerBaseline + 64 : 1490;
+    for (const line of priceFit.lines) {
+      overlay.push(
+        textPath(anton(), line, cx, lineBaseline, priceSize, white),
+      );
+      priceBaseline = lineBaseline;
+      lineBaseline += Math.round(priceSize * 1.02);
+    }
+  }
+  let pillBottom = 0;
+  if (cta.trim()) {
+    const ctaFit = shrinkToFit(
+      workSans(),
+      cta.trim(),
+      [44, 38, 32, 28, 24],
+      maxW - 120,
+    );
+    const ctaSize = ctaFit.size;
+    const ctaText = ctaFit.text;
+    const pillW =
+      workSans().getAdvanceWidth(ctaText, ctaSize, { kerning: true }) + 120;
+    const pillH = 96;
+    const pillY = priceBaseline + 36;
+    pillBottom = pillY + pillH;
+    overlay.push(
+      `<rect x="${Math.round(cx - pillW / 2)}" y="${pillY}" width="${Math.round(pillW)}" height="${pillH}" rx="48" fill="${brand.accent}"/>`,
+    );
+    overlay.push(
+      textPath(
+        workSans(),
+        (ctaText),
+        cx,
+        pillY + 63,
+        ctaSize,
+        white,
+        true,
+      ),
+    );
+  }
+  if (businessName.trim()) {
+    const nameBaseline =
+      pillBottom > 0
+        ? Math.min(pillBottom + 52, FLYER_H - 40)
+        : FLYER_H - 64;
+    overlay.push(
+      textPath(
+        workSans(),
+        businessName.trim().toUpperCase(),
+        cx,
+        nameBaseline,
+        34,
+        softWhite,
+      ),
+    );
+  }
+  const bg = await sharp(args.background)
+    .resize(FLYER_W, FLYER_H, { fit: "cover", position: "centre" })
+    .toBuffer();
+  return sharp(bg)
+    .composite([
+      {
+        input: Buffer.from(
+          `<svg width="${FLYER_W}" height="${FLYER_H}">${overlay.join("")}</svg>`,
+        ),
+        left: 0,
+        top: 0,
+      },
+    ])
+    .png()
+    .toBuffer();
 }

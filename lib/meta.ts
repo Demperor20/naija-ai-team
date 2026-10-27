@@ -1572,3 +1572,99 @@ export async function segment(args: SegmentArgs): Promise<SegmentResult> {
     ? lastError
     : new Error("Meta API request failed after retries");
 }
+
+// ---------------------------------------------------------------------------
+// Muse Image (AGENTS.md section 14). Responses-only, through the hosted
+// image_generation tool: the model returns an image_generation_call item
+// whose result is a base64 WebP. Sizes follow the OpenAI-style "WxH" form;
+// "1024x1536" yields a 1280x1920 portrait.
+// ---------------------------------------------------------------------------
+
+const IMAGE_TIMEOUT_MS = 180_000;
+
+export interface GenerateImageArgs {
+  prompt: string;
+  size?: string;
+  model?: string;
+  timeoutMs?: number;
+}
+
+export interface GenerateImageResult {
+  buffer: Buffer;
+  mime: "image/webp";
+  model: string;
+  ms: number;
+}
+
+export async function generateImage(
+  args: GenerateImageArgs,
+): Promise<GenerateImageResult> {
+  const apiKey = process.env.META_API_KEY;
+  if (!apiKey) throw new Error("Missing META_API_KEY environment variable");
+  const model = args.model ?? process.env.META_IMAGE_MODEL;
+  if (!model) throw new Error("Missing META_IMAGE_MODEL environment variable");
+  const prompt = args.prompt.trim();
+  if (!prompt) throw new Error("generateImage needs a prompt.");
+  const timeoutMs = args.timeoutMs ?? IMAGE_TIMEOUT_MS;
+  const url = responsesEndpoint();
+  const body = {
+    model,
+    input: prompt,
+    tools: [{ type: "image_generation", size: args.size ?? "1024x1536" }],
+  };
+
+  const started = Date.now();
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status === 429 || res.status >= 500) {
+        lastError = new Error(errorMessage(res.status, await res.text()));
+        continue;
+      }
+      if (!res.ok) {
+        throw new Error(errorMessage(res.status, await res.text()));
+      }
+      const raw = (await res.json()) as {
+        model?: string;
+        output?: Array<{
+          type?: string;
+          status?: string;
+          result?: string;
+        }>;
+      };
+      const call = (raw.output ?? []).find(
+        (o) => o?.type === "image_generation_call",
+      );
+      if (!call || call.status !== "completed" || !call.result) {
+        throw new Error(
+          `Meta Image returned no completed image (status: ${call?.status ?? "missing"}).`,
+        );
+      }
+      return {
+        buffer: Buffer.from(call.result, "base64"),
+        mime: "image/webp",
+        model:
+          typeof raw.model === "string" && raw.model ? raw.model : model,
+        ms: Date.now() - started,
+      };
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Meta API ")) {
+        throw err;
+      }
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Meta API request failed after retries");
+}

@@ -3,7 +3,7 @@
 // the specialist's own loop (this file must not import run.ts).
 
 import { randomUUID } from "node:crypto";
-import { segment, type MetaTool } from "../meta";
+import { generateImage, segment, type MetaTool } from "../meta";
 import {
   createProduct,
   getClient,
@@ -18,6 +18,7 @@ import {
   applyMask,
   DEFAULT_BRAND,
   renderCatalogue,
+  renderFlyer,
   resizeForSegment,
   type BrandColours,
 } from "../images";
@@ -114,7 +115,12 @@ export function getToolsFor(agentKey: string): MetaTool[] {
     return [WEB_SEARCH_TOOL, BOOKS_SUMMARY_TOOL, WHO_OWES_ME_TOOL];
   }
   if (agentKey === "design") {
-    return [WEB_SEARCH_TOOL, MAKE_CUTOUT_TOOL, MAKE_CATALOGUE_TOOL];
+    return [
+      WEB_SEARCH_TOOL,
+      MAKE_CUTOUT_TOOL,
+      MAKE_CATALOGUE_TOOL,
+      MAKE_FLYER_TOOL,
+    ];
   }
   return [WEB_SEARCH_TOOL];
 }
@@ -403,6 +409,82 @@ export async function handleMakeCatalogue(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { error: `make_catalogue failed: ${detail}` };
+  }
+}
+
+export const MAKE_FLYER_TOOL: MetaTool = {
+  type: "function",
+  function: {
+    name: "make_flyer",
+    description:
+      "Make a 1080x1920 promo flyer image: an AI background plus the exact words printed on top. Use only prices and details the owner gave or approved; never invent a phone number, address or price.",
+    parameters: {
+      type: "object",
+      properties: {
+        background: {
+          type: "string",
+          description:
+            "Background picture to generate: subject, style, colours. No words will be drawn in it.",
+        },
+        headline: {
+          type: "string",
+          description: "Headline, 6 words or fewer.",
+        },
+        offer: {
+          type: "string",
+          description: "The offer in one short sentence.",
+        },
+        price: {
+          type: "string",
+          description: "Exact price words, e.g. '₦500 per cup'.",
+        },
+        cta: {
+          type: "string",
+          description: "Call to action, e.g. 'Chat us on WhatsApp'.",
+        },
+      },
+      required: ["background", "headline"],
+    },
+  },
+};
+
+export interface MakeFlyerResult {
+  flyer_file_id: string;
+  url: string;
+}
+
+export async function handleMakeFlyer(
+  companyId: string,
+  args: Record<string, unknown>,
+): Promise<MakeFlyerResult | { error: string }> {
+  const str = (v: unknown): string =>
+    typeof v === "string" ? v.trim() : "";
+  const background = str(args.background);
+  const headline = str(args.headline);
+  if (!background) return { error: "make_flyer needs a background." };
+  if (!headline) return { error: "make_flyer needs a headline." };
+  try {
+    const company = await getCompany(companyId);
+    if (!company) return { error: "Company not found." };
+    const generated = await generateImage({
+      prompt: `${background}, no text, no words, no letters, no logos, no watermark`,
+    });
+    const flyer = await renderFlyer({
+      background: generated.buffer,
+      words: {
+        headline: headline.slice(0, 60),
+        offer: str(args.offer).slice(0, 140),
+        price: str(args.price).slice(0, 60),
+        cta: str(args.cta).slice(0, 60),
+        businessName: company.name,
+      },
+      brand: brandFor(company.profile),
+    });
+    const saved = await uploadTeamFile(companyId, "flyer", flyer);
+    return { flyer_file_id: saved.fileId, url: saved.url };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: `make_flyer failed: ${detail}` };
   }
 }
 

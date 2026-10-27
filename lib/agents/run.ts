@@ -32,6 +32,7 @@ import {
   handleBooksSummary,
   handleMakeCatalogue,
   handleMakeCutout,
+  handleMakeFlyer,
   handleWebSearch,
   handleWhoOwesMe,
 } from "./tools";
@@ -414,18 +415,26 @@ async function executeTool(
     }
   }
 
-  if (call.name === "make_cutout" || call.name === "make_catalogue") {
+  if (
+    call.name === "make_cutout" ||
+    call.name === "make_catalogue" ||
+    call.name === "make_flyer"
+  ) {
     const args = parseToolArgs(call.arguments);
     if (!args) return fail(`could not parse ${call.name} arguments as JSON.`);
     try {
       const result =
         call.name === "make_cutout"
           ? await handleMakeCutout(ctx.company.id, args)
-          : await handleMakeCatalogue(ctx.company.id);
+          : call.name === "make_catalogue"
+            ? await handleMakeCatalogue(ctx.company.id)
+            : await handleMakeFlyer(ctx.company.id, args);
       const detail =
         call.name === "make_cutout"
           ? `make_cutout(${(args.product_name as string) ?? "?"})`
-          : "make_catalogue()";
+          : call.name === "make_catalogue"
+            ? "make_catalogue()"
+            : `make_flyer(${(args.headline as string) ?? "?"})`;
       return {
         text: short(JSON.stringify(result), 4000),
         steps: [
