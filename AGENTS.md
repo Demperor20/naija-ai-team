@@ -12,7 +12,7 @@ An owner sends a text, voice note, photo or short shop video. An **AI Co-Founder
 
 Approved proposals become **settled facts** that every agent builds on. Nothing is "done", sent, posted or paid for without approval.
 
-Hackathon: Meta Global AI Developer Hackathon, Startup track. Deadline: Wed Nov 4, 9:00 PM ET. **This repo started empty on Oct 26, 2026. Write all code fresh; never copy code from other projects.**
+Hackathon: Meta Global AI Developer Hackathon, Indie developer track, Build for Your World category. Deadline: Wed Nov 4, 9:00 PM ET. **This repo started empty on Oct 26, 2026. Write all code fresh; never copy code from other projects.**
 
 ## 2. Hard rules (never break these)
 

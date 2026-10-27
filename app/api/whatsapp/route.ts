@@ -2,6 +2,7 @@ import { after } from "next/server";
 import {
   createCompany,
   getDecision,
+  getFile,
   getWhatsappUser,
   hasWhatsappSeen,
   markWhatsappSeen,
@@ -13,6 +14,7 @@ import { runTeam } from "@/lib/agents/run";
 import { applyDecision } from "@/lib/decisions";
 import {
   downloadMedia,
+  sendImage,
   sendProposalButtons,
   sendText,
   verifySignature,
@@ -365,7 +367,28 @@ async function handleButton(phone: string, buttonId: string): Promise<void> {
   await setDecisionStatus(user.company_id, decisionId, status);
   if (status === "approved") {
     try {
-      await applyDecision(user.company_id, decisionId);
+      const result = await applyDecision(user.company_id, decisionId);
+      // File proposals (catalogue, later flyer/video/statement): send the
+      // approved file ready to forward or post.
+      if (result.fileId) {
+        const file = await getFile(result.fileId);
+        if (file && file.company_id === user.company_id) {
+          const res = await fetch(file.url, {
+            signal: AbortSignal.timeout(30_000),
+          });
+          if (res.ok) {
+            const bytes = Buffer.from(await res.arrayBuffer());
+            await trySend(phone, "approved-file", () =>
+              sendImage(
+                phone,
+                bytes,
+                file.mime ?? "image/png",
+                `${decision.title} — ready to forward or post.`,
+              ),
+            );
+          }
+        }
+      }
     } catch (err) {
       console.error(
         `whatsapp apply failed for ${decisionId}:`,

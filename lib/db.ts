@@ -653,3 +653,120 @@ export async function listFiles(companyId: string): Promise<FileRow[]> {
   if (error) fail("listFiles", error);
   return (data ?? []) as FileRow[];
 }
+
+// --- Products ---
+
+export interface ProductRow {
+  id: string;
+  company_id: string;
+  name: string;
+  description: string | null;
+  price: number | null;
+  photo_file_id: string | null;
+  cutout_file_id: string | null;
+  status: string;
+  created_at: string;
+}
+
+export async function createProduct(input: {
+  companyId: string;
+  name: string;
+  description?: string;
+  price?: number;
+  photoFileId?: string;
+  cutoutFileId?: string;
+}): Promise<ProductRow> {
+  const { data, error } = await getClient()
+    .from("products")
+    .insert({
+      company_id: input.companyId,
+      name: input.name,
+      description: input.description ?? null,
+      price: input.price ?? null,
+      photo_file_id: input.photoFileId ?? null,
+      cutout_file_id: input.cutoutFileId ?? null,
+      status: "pending",
+    })
+    .select()
+    .single();
+  if (error) fail("createProduct", error);
+  return data as ProductRow;
+}
+
+export async function getProduct(
+  companyId: string,
+  productId: string,
+): Promise<ProductRow | null> {
+  const { data, error } = await getClient()
+    .from("products")
+    .select()
+    .eq("id", productId)
+    .eq("company_id", companyId)
+    .maybeSingle();
+  if (error) fail("getProduct", error);
+  return data as ProductRow | null;
+}
+
+export async function setProductPrice(
+  companyId: string,
+  productId: string,
+  price: number | null,
+): Promise<void> {
+  const { error } = await getClient()
+    .from("products")
+    .update({ price })
+    .eq("id", productId)
+    .eq("company_id", companyId);
+  if (error) fail("setProductPrice", error);
+}
+
+// Approves the given products (scoped to the company). Returns how many.
+export async function approveProducts(
+  companyId: string,
+  productIds: string[],
+): Promise<number> {
+  if (productIds.length === 0) return 0;
+  const { data, error } = await getClient()
+    .from("products")
+    .update({ status: "approved" })
+    .in("id", productIds)
+    .eq("company_id", companyId)
+    .select("id");
+  if (error) fail("approveProducts", error);
+  return (data ?? []).length;
+}
+
+export async function listApprovedProducts(
+  companyId: string,
+): Promise<ProductRow[]> {
+  const { data, error } = await getClient()
+    .from("products")
+    .select()
+    .eq("company_id", companyId)
+    .eq("status", "approved")
+    .order("created_at", { ascending: true });
+  if (error) fail("listApprovedProducts", error);
+  return (data ?? []) as ProductRow[];
+}
+
+// --- File approval ---
+
+// Marks a team-made file approved (files.meta.approved = true).
+export async function setFileApproved(
+  companyId: string,
+  fileId: string,
+): Promise<boolean> {
+  const file = await getFile(fileId);
+  if (!file || file.company_id !== companyId) return false;
+  const meta =
+    typeof file.meta === "object" && file.meta !== null
+      ? (file.meta as Record<string, unknown>)
+      : {};
+  const { error } = await getClient()
+    .from("files")
+    .update({ meta: { ...meta, approved: true } })
+    .eq("id", fileId)
+    .eq("company_id", companyId);
+  if (error) fail("setFileApproved", error);
+  return true;
+}

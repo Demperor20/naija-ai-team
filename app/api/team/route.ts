@@ -6,7 +6,11 @@ import {
   type DecisionStatus,
 } from "@/lib/db";
 import { getSessionCompanyId } from "@/lib/session";
-import { decisionToDTO, runTeam } from "@/lib/agents/run";
+import {
+  decisionToDTO,
+  runTeam,
+  withPreviewUrls,
+} from "@/lib/agents/run";
 import { applyDecision } from "@/lib/decisions";
 
 export const maxDuration = 300;
@@ -103,7 +107,10 @@ export async function POST(request: Request) {
         );
         return NextResponse.json({
           ok: true,
-          decisions: rows.map(decisionToDTO),
+          decisions: await withPreviewUrls(
+            companyId,
+            rows.map(decisionToDTO),
+          ),
         });
       }
       case "decide": {

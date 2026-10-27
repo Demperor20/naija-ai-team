@@ -27,6 +27,7 @@ interface Proposal {
   createdAt: string;
   kind: string;
   payload: unknown;
+  previewUrl?: string | null;
 }
 
 interface ApiResponse {
@@ -633,6 +634,13 @@ export default function TryPage() {
                   <p className="mt-1 text-sm leading-6 text-stone-700">
                     {p.description}
                   </p>
+                  {p.previewUrl ? (
+                    <img
+                      src={p.previewUrl}
+                      alt=""
+                      className="mt-2 w-full rounded-lg border border-stone-200"
+                    />
+                  ) : null}
                   <p className="mt-1 text-xs text-stone-500">
                     {agentNameOfKey(p.owner)}
                     {p.priority ? ` · ${p.priority} priority` : ""}

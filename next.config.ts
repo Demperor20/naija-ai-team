@@ -8,9 +8,9 @@ const nextConfig: NextConfig = {
   // from node_modules at runtime, on Vercel and locally.
   serverExternalPackages: ["ffmpeg-static"],
   outputFileTracingIncludes: {
-    "/api/team": ["./prompts/**/*"],
+    "/api/team": ["./prompts/**/*", "./assets/**/*"],
     "/api/start": ["./prompts/**/*"],
-    "/api/whatsapp": ["./prompts/**/*"],
+    "/api/whatsapp": ["./prompts/**/*", "./assets/**/*"],
     "/api/upload": ["./prompts/**/*"],
   },
   turbopack: {

@@ -4,11 +4,13 @@
 // guarded by applied_at (see markDecisionApplied).
 
 import {
+  approveProducts,
   getDecision,
   getFile,
   getMessageById,
   insertLedgerEntries,
   markDecisionApplied,
+  setFileApproved,
   type NewLedgerEntry,
 } from "./db";
 
@@ -25,6 +27,9 @@ export interface ApplyResult {
   applied: boolean;
   kind: string;
   inserted?: number;
+  // For file kinds (catalogue, later flyer/video/statement): the approved
+  // file, so callers can send it to the owner.
+  fileId?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +286,7 @@ export async function applyDecision(
   if (decision.applied_at) return { applied: false, kind };
 
   let inserted: number | undefined;
+  let fileId: string | undefined;
   switch (kind) {
     case "general":
       // Nothing else to do: the approved row itself is the effect the team
@@ -295,13 +301,34 @@ export async function applyDecision(
       );
       break;
     }
-    // TODO (Day 5) — kind "product": set the products in
-    // payload.product_ids to 'approved', scoped to this company.
-    // TODO (Day 5/6) — kinds "flyer" | "catalogue" | "video": set
-    // files.meta.approved = true for payload.file_id; on WhatsApp, send the
-    // file to the owner ready to forward or post.
-    // TODO (Day 7) — kind "statement": same file-approval as flyer for the
-    // statement PDF.
+    case "product": {
+      const payload = decision.payload as Record<string, unknown> | null;
+      const ids = Array.isArray(payload?.product_ids)
+        ? (payload.product_ids as unknown[]).filter(
+            (v): v is string => typeof v === "string" && v.length > 0,
+          )
+        : [];
+      if (ids.length === 0) {
+        throw new Error("product proposal has no product_ids.");
+      }
+      inserted = await approveProducts(companyId, ids);
+      break;
+    }
+    case "catalogue": {
+      const payload = decision.payload as Record<string, unknown> | null;
+      const id =
+        typeof payload?.file_id === "string" ? payload.file_id : "";
+      if (!id) throw new Error("catalogue proposal has no file_id.");
+      const ok = await setFileApproved(companyId, id);
+      if (!ok) throw new Error("catalogue file not found for this company.");
+      fileId = id;
+      break;
+    }
+    // TODO (Day 5/6) — kinds "flyer" | "video": same file-approval as
+    // catalogue; on WhatsApp, send the file to the owner ready to forward
+    // or post.
+    // TODO (Day 7) — kind "statement": same file-approval as catalogue for
+    // the statement PDF.
     default:
       console.warn(
         `applyDecision: kind not implemented yet: ${kind}; leaving decision ${decisionId} unapplied`,
@@ -310,5 +337,5 @@ export async function applyDecision(
   }
 
   const claimed = await markDecisionApplied(companyId, decisionId);
-  return { applied: claimed, kind, inserted };
+  return { applied: claimed, kind, inserted, fileId };
 }

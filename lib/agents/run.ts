@@ -9,6 +9,7 @@ import {
 import {
   getApprovedDecisions,
   getCompany,
+  getFile,
   getRecentMessages,
   listConfirmedLedgerEntries,
   saveAgentRun,
@@ -29,6 +30,8 @@ import {
 import {
   getToolsFor,
   handleBooksSummary,
+  handleMakeCatalogue,
+  handleMakeCutout,
   handleWebSearch,
   handleWhoOwesMe,
 } from "./tools";
@@ -55,6 +58,9 @@ export interface DecisionDTO {
   createdAt: string;
   kind: string;
   payload: unknown;
+  // Public file URL for file proposals (catalogue, flyer, video,
+  // statement); null otherwise. Resolved by withPreviewUrls().
+  previewUrl: string | null;
 }
 
 export interface RunTeamResult {
@@ -234,7 +240,31 @@ export function decisionToDTO(d: Decision): DecisionDTO {
     createdAt: d.created_at,
     kind: d.kind,
     payload: d.payload,
+    previewUrl: null,
   };
+}
+
+const FILE_KINDS = new Set(["catalogue", "flyer", "video", "statement"]);
+
+// Fills previewUrl for file proposals (payload.file_id), company-checked.
+export async function withPreviewUrls(
+  companyId: string,
+  dtos: DecisionDTO[],
+): Promise<DecisionDTO[]> {
+  return Promise.all(
+    dtos.map(async (d) => {
+      if (!FILE_KINDS.has(d.kind)) return d;
+      const payload =
+        typeof d.payload === "object" && d.payload !== null
+          ? (d.payload as Record<string, unknown>)
+          : null;
+      const fileId = payload?.file_id;
+      if (typeof fileId !== "string" || !fileId) return d;
+      const file = await getFile(fileId);
+      if (!file || file.company_id !== companyId) return d;
+      return { ...d, previewUrl: file.url };
+    }),
+  );
 }
 
 function systemPromptFor(agentKey: string, ctx: LoopContext): string {
@@ -374,6 +404,36 @@ async function executeTool(
                 ? `books_summary(${(args.period as string) ?? "week"})`
                 : "who_owes_me()",
             ),
+            ms: Date.now() - started,
+          },
+        ],
+      };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return fail(`${call.name} failed: ${detail}`);
+    }
+  }
+
+  if (call.name === "make_cutout" || call.name === "make_catalogue") {
+    const args = parseToolArgs(call.arguments);
+    if (!args) return fail(`could not parse ${call.name} arguments as JSON.`);
+    try {
+      const result =
+        call.name === "make_cutout"
+          ? await handleMakeCutout(ctx.company.id, args)
+          : await handleMakeCatalogue(ctx.company.id);
+      const detail =
+        call.name === "make_cutout"
+          ? `make_cutout(${(args.product_name as string) ?? "?"})`
+          : "make_catalogue()";
+      return {
+        text: short(JSON.stringify(result), 4000),
+        steps: [
+          {
+            agentKey: parentAgentKey,
+            model: parentModel,
+            step: "tool",
+            detail: short(detail),
             ms: Date.now() - started,
           },
         ],
@@ -705,6 +765,9 @@ export async function runTeam(input: RunTeamInput): Promise<RunTeamResult> {
     agent: agent.key,
     agentName: agent.displayName,
     channelId: input.channelId,
-    decisions: savedDecisions.map(decisionToDTO),
+    decisions: await withPreviewUrls(
+      input.companyId,
+      savedDecisions.map(decisionToDTO),
+    ),
   };
 }

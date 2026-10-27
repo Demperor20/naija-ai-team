@@ -2,8 +2,25 @@
 // handler. delegate_* calls are executed by lib/agents/run.ts, which runs
 // the specialist's own loop (this file must not import run.ts).
 
-import type { MetaTool } from "../meta";
-import { getLedgerDaily, getWhoOwesMe } from "../db";
+import { randomUUID } from "node:crypto";
+import { segment, type MetaTool } from "../meta";
+import {
+  createProduct,
+  getClient,
+  getCompany,
+  getFile,
+  getLedgerDaily,
+  getWhoOwesMe,
+  listApprovedProducts,
+  saveFile,
+} from "../db";
+import {
+  applyMask,
+  DEFAULT_BRAND,
+  renderCatalogue,
+  resizeForSegment,
+  type BrandColours,
+} from "../images";
 import { SPECIALIST_KEYS } from "./team";
 
 export const WEB_SEARCH_TOOL: MetaTool = {
@@ -96,6 +113,9 @@ export function getToolsFor(agentKey: string): MetaTool[] {
   if (agentKey === "books") {
     return [WEB_SEARCH_TOOL, BOOKS_SUMMARY_TOOL, WHO_OWES_ME_TOOL];
   }
+  if (agentKey === "design") {
+    return [WEB_SEARCH_TOOL, MAKE_CUTOUT_TOOL, MAKE_CATALOGUE_TOOL];
+  }
   return [WEB_SEARCH_TOOL];
 }
 
@@ -172,6 +192,218 @@ export async function handleWhoOwesMe(
       owed: Number(r.balance) || 0,
     }))
     .filter((r) => r.owed > 0);
+}
+
+export const MAKE_CUTOUT_TOOL: MetaTool = {
+  type: "function",
+  function: {
+    name: "make_cutout",
+    description:
+      "Cut a product out of its photo onto a clean brand background. Creates the product (pending approval). Use the file_id of the owner's product photo and a short product name.",
+    parameters: {
+      type: "object",
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The file_id of the product photo.",
+        },
+        product_name: {
+          type: "string",
+          description:
+            "Short product name in plain words, e.g. 'blue stripe Ankara gown'. Also used to find the product in the photo.",
+        },
+      },
+      required: ["file_id", "product_name"],
+    },
+  },
+};
+
+export const MAKE_CATALOGUE_TOOL: MetaTool = {
+  type: "function",
+  function: {
+    name: "make_catalogue",
+    description:
+      "Lay out all approved products with cutouts into a 1080x1350 catalogue image (name and naira price under each). Call only when at least one product is approved; ask for missing prices first.",
+    parameters: { type: "object", properties: {} },
+  },
+};
+
+function dayStamp(): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Africa/Lagos",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+async function downloadFile(url: string): Promise<Buffer> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) {
+    throw new Error(`could not download file (HTTP ${res.status}).`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function uploadTeamFile(
+  companyId: string,
+  kind: string,
+  buffer: Buffer,
+  messageId?: string,
+  sourceFileId?: string,
+): Promise<{ fileId: string; url: string }> {
+  const path = `${companyId}/${dayStamp()}/${randomUUID()}.png`;
+  const { error } = await getClient()
+    .storage.from("files")
+    .upload(path, buffer, { contentType: "image/png", upsert: false });
+  if (error) throw new Error(`file upload failed: ${error.message}`);
+  const url = getClient().storage.from("files").getPublicUrl(path).data
+    .publicUrl;
+  const file = await saveFile({
+    companyId,
+    kind,
+    url,
+    mime: "image/png",
+    madeBy: "team",
+    messageId,
+    meta: { size: buffer.length, ...(sourceFileId ? { source_file_id: sourceFileId } : {}) },
+  });
+  return { fileId: file.id, url };
+}
+
+function brandFor(profile: unknown): BrandColours {
+  const brand = { ...DEFAULT_BRAND };
+  if (typeof profile === "object" && profile !== null) {
+    const custom = (profile as Record<string, unknown>).brand;
+    if (typeof custom === "object" && custom !== null) {
+      for (const key of Object.keys(brand) as Array<keyof BrandColours>) {
+        const value = (custom as Record<string, unknown>)[key];
+        if (typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)) {
+          brand[key] = value;
+        }
+      }
+    }
+  }
+  return brand;
+}
+
+export interface MakeCutoutResult {
+  product_id: string;
+  product_name: string;
+  cutout_file_id: string;
+  instances_found: number;
+}
+
+export async function handleMakeCutout(
+  companyId: string,
+  args: { file_id?: unknown; product_name?: unknown },
+): Promise<MakeCutoutResult | { error: string }> {
+  const fileId = typeof args.file_id === "string" ? args.file_id : "";
+  const productName =
+    typeof args.product_name === "string" ? args.product_name.trim() : "";
+  if (!fileId) return { error: "make_cutout needs a file_id." };
+  if (!productName) return { error: "make_cutout needs a product_name." };
+  const file = await getFile(fileId);
+  if (!file || file.company_id !== companyId) {
+    return { error: "That photo was not found." };
+  }
+  try {
+    const [company, photo] = await Promise.all([
+      getCompany(companyId),
+      downloadFile(file.url),
+    ]);
+    if (!company) return { error: "Company not found." };
+    const small = await resizeForSegment(photo);
+    const found = await segment({
+      buffer: small.buffer,
+      mime: "image/jpeg",
+      prompt: productName.slice(0, 100),
+    });
+    if (found.instances.length === 0) {
+      return {
+        error: `I couldn't find "${productName}" in that photo. Try a clearer photo or a simpler name.`,
+      };
+    }
+    const best = found.instances.reduce((a, b) =>
+      b.foreground > a.foreground ? b : a,
+    );
+    const cutout = await applyMask({
+      photo,
+      instance: best,
+      background: brandFor(company.profile).background,
+    });
+    const saved = await uploadTeamFile(companyId, "cutout", cutout, undefined, fileId);
+    const product = await createProduct({
+      companyId,
+      name: productName.slice(0, 200),
+      photoFileId: fileId,
+      cutoutFileId: saved.fileId,
+    });
+    return {
+      product_id: product.id,
+      product_name: product.name,
+      cutout_file_id: saved.fileId,
+      instances_found: found.instances.length,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: `make_cutout failed: ${detail}` };
+  }
+}
+
+export interface MakeCatalogueResult {
+  catalogue_file_id: string;
+  url: string;
+  included: number;
+  total_approved: number;
+}
+
+export async function handleMakeCatalogue(
+  companyId: string,
+): Promise<MakeCatalogueResult | { error: string }> {
+  try {
+    const company = await getCompany(companyId);
+    if (!company) return { error: "Company not found." };
+    const approved = await listApprovedProducts(companyId);
+    const withCutout = approved.filter((p) => p.cutout_file_id);
+    if (withCutout.length === 0) {
+      return {
+        error:
+          approved.length === 0
+            ? "No products are approved yet. Add products with make_cutout and get the owner to approve them first."
+            : "None of the approved products has a cutout yet. Run make_cutout for each first.",
+      };
+    }
+    const items = [];
+    for (const p of withCutout) {
+      const cutout = await getFile(p.cutout_file_id as string);
+      if (!cutout || cutout.company_id !== companyId) continue;
+      items.push({
+        name: p.name,
+        price: typeof p.price === "number" ? p.price : p.price === null ? null : Number(p.price),
+        cutout: await downloadFile(cutout.url),
+      });
+    }
+    if (items.length === 0) {
+      return { error: "The approved products' cutouts are missing." };
+    }
+    const brand = brandFor(company.profile);
+    const rendered = await renderCatalogue({
+      businessName: company.name,
+      products: items,
+      brand,
+    });
+    const saved = await uploadTeamFile(companyId, "catalogue", rendered.png);
+    return {
+      catalogue_file_id: saved.fileId,
+      url: saved.url,
+      included: rendered.included,
+      total_approved: approved.length,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: `make_catalogue failed: ${detail}` };
+  }
 }
 
 export interface WebSearchResult {
