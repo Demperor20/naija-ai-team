@@ -3,7 +3,7 @@
 // images uses the embedded Work Sans / Anton TTFs in assets/fonts/ (glyph
 // outlines via opentype.js, so no system fonts are needed on Vercel).
 
-import sharp from "sharp";
+import sharp, { type OverlayOptions } from "sharp";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -248,7 +248,8 @@ export async function applyMask(args: ApplyMaskArgs): Promise<Buffer> {
     .png()
     .toBuffer();
 
-  // Soft shadow: blurred silhouette on black, offset down.
+  // Soft shadow: blurred silhouette on black, offset down. Opacity is
+  // baked into the alpha (sharp 0.35 dropped the composite opacity option).
   const shadowSigma = Math.min(15, Math.max(3, feather * 4));
   const shadowAlpha = await sharp(fullAlpha, {
     raw: { width: photoWidth, height: photoHeight, channels: 1 },
@@ -257,6 +258,9 @@ export async function applyMask(args: ApplyMaskArgs): Promise<Buffer> {
     .greyscale()
     .raw()
     .toBuffer();
+  for (let i = 0; i < shadowAlpha.length; i++) {
+    shadowAlpha[i] = Math.round(shadowAlpha[i] * 0.32);
+  }
   const shadow = await sharp({
     create: {
       width: photoWidth,
@@ -281,7 +285,7 @@ export async function applyMask(args: ApplyMaskArgs): Promise<Buffer> {
     },
   })
     .composite([
-      { input: shadow, left: 0, top: drop, opacity: 0.32 },
+      { input: shadow, left: 0, top: drop },
       { input: cutout, left: 0, top: 0 },
     ])
     .flatten({ background: hexToRgb(background) })
@@ -400,7 +404,7 @@ export async function renderCatalogue(
   // Product images, contained in the top of each card. Resized first so
   // everything below goes into ONE composite call (later calls replace
   // earlier layers).
-  const imageLayers: sharp.OverlayOptions[] = [];
+  const imageLayers: OverlayOptions[] = [];
   for (let i = 0; i < products.length; i++) {
     const resized = await sharp(products[i].cutout)
       .resize(cardW - 48, imageH - 16, {

@@ -1412,7 +1412,7 @@ export function parseSegmentationText(text: string): SegmentInstance[] {
   for (const rawLine of text.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-    const header = line.match(/^<([0-9]+)f>(.*)$/s);
+    const header = line.match(/^<([0-9]+)f>([\s\S]*)$/);
     if (!header) continue; // not a segmentation line; ignore
     let remainder = header[2];
     if (!remainder) continue;
