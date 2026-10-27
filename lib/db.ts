@@ -299,6 +299,20 @@ export async function listDecisions(
   return (data ?? []) as Decision[];
 }
 
+export async function getDecision(
+  companyId: string,
+  decisionId: string,
+): Promise<Decision | null> {
+  const { data, error } = await getClient()
+    .from("decisions")
+    .select()
+    .eq("company_id", companyId)
+    .eq("decision_id", decisionId)
+    .maybeSingle();
+  if (error) fail("getDecision", error);
+  return data as Decision | null;
+}
+
 export async function getApprovedDecisions(
   companyId: string,
 ): Promise<Decision[]> {
