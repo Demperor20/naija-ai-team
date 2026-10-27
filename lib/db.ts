@@ -76,6 +76,9 @@ export interface Decision {
   owner_note: string | null;
   created_at: string;
   decided_at: string | null;
+  kind: string;
+  payload: unknown;
+  applied_at: string | null;
 }
 
 export interface AgentRun {
@@ -99,12 +102,49 @@ export interface WhatsappUser {
   last_seen_at: string;
 }
 
+export interface LedgerEntryRow {
+  id: string;
+  company_id: string;
+  decision_id: string | null;
+  source_file_id: string | null;
+  source_message_id: string | null;
+  entry_date: string;
+  kind: string;
+  item: string | null;
+  quantity: number | null;
+  unit_price: number | null;
+  amount: number;
+  counterparty: string | null;
+  payment_method: string | null;
+  confidence: number | null;
+  status: string;
+  created_at: string;
+}
+
+export interface LedgerDailyRow {
+  company_id: string;
+  entry_date: string;
+  sales: number;
+  expenses: number;
+  profit: number;
+}
+
+export interface WhoOwesRow {
+  company_id: string;
+  counterparty: string;
+  balance: number;
+}
+
 export interface FileRow {
   id: string;
   company_id: string;
   decision_id: string | null;
   kind: string;
   url: string;
+  mime: string | null;
+  made_by: string;
+  message_id: string | null;
+  meta: unknown;
   created_at: string;
 }
 
@@ -229,6 +269,8 @@ export interface NewDecision {
   category?: string;
   owner?: string;
   priority?: string;
+  kind?: string;
+  payload?: unknown;
 }
 
 export async function saveDecisions(args: {
@@ -250,6 +292,8 @@ export async function saveDecisions(args: {
         category: d.category ?? null,
         owner: d.owner ?? null,
         priority: d.priority ?? null,
+        kind: d.kind ?? "general",
+        payload: d.payload ?? {},
         status: "pending",
       })),
     )
@@ -282,6 +326,23 @@ export async function setDecisionStatus(
     throw new Error("db.setDecisionStatus failed: decision not found");
   }
   return data as Decision;
+}
+
+// Atomically marks a decision applied, exactly once: only the caller whose
+// update finds applied_at still null wins (returns true).
+export async function markDecisionApplied(
+  companyId: string,
+  decisionId: string,
+): Promise<boolean> {
+  const { data, error } = await getClient()
+    .from("decisions")
+    .update({ applied_at: new Date().toISOString() })
+    .eq("company_id", companyId)
+    .eq("decision_id", decisionId)
+    .is("applied_at", null)
+    .select("decision_id");
+  if (error) fail("markDecisionApplied", error);
+  return (data?.length ?? 0) > 0;
 }
 
 export async function listDecisions(
@@ -437,6 +498,10 @@ export async function saveFile(input: {
   decisionId?: string;
   kind: string;
   url: string;
+  mime?: string;
+  madeBy?: string;
+  messageId?: string;
+  meta?: unknown;
 }): Promise<FileRow> {
   const { data, error } = await getClient()
     .from("files")
@@ -445,11 +510,138 @@ export async function saveFile(input: {
       decision_id: input.decisionId ?? null,
       kind: input.kind,
       url: input.url,
+      mime: input.mime ?? null,
+      made_by: input.madeBy ?? "owner",
+      message_id: input.messageId ?? null,
+      meta: input.meta ?? {},
     })
     .select()
     .single();
   if (error) fail("saveFile", error);
   return data as FileRow;
+}
+
+export async function getFile(fileId: string): Promise<FileRow | null> {
+  const { data, error } = await getClient()
+    .from("files")
+    .select()
+    .eq("id", fileId)
+    .maybeSingle();
+  if (error) fail("getFile", error);
+  return data as FileRow | null;
+}
+
+export async function getMessageById(
+  messageId: string,
+): Promise<Message | null> {
+  const { data, error } = await getClient()
+    .from("messages")
+    .select()
+    .eq("id", messageId)
+    .maybeSingle();
+  if (error) fail("getMessageById", error);
+  return data as Message | null;
+}
+
+export async function findCompaniesByName(name: string): Promise<Company[]> {
+  const { data, error } = await getClient()
+    .from("companies")
+    .select()
+    .ilike("name", name)
+    .order("created_at", { ascending: false });
+  if (error) fail("findCompaniesByName", error);
+  return (data ?? []) as Company[];
+}
+
+export async function listConfirmedLedgerEntries(
+  companyId: string,
+  limit: number,
+): Promise<LedgerEntryRow[]> {
+  const { data, error } = await getClient()
+    .from("ledger_entries")
+    .select()
+    .eq("company_id", companyId)
+    .eq("status", "confirmed")
+    .order("entry_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) fail("listConfirmedLedgerEntries", error);
+  return (data ?? []) as LedgerEntryRow[];
+}
+
+export interface NewLedgerEntry {
+  decisionId: string;
+  messageId: string | null;
+  fileId: string | null;
+  entryDate: string;
+  kind: string;
+  item: string | null;
+  quantity: number | null;
+  unitPrice: number | null;
+  amount: number;
+  counterparty: string | null;
+  paymentMethod: string | null;
+  confidence: number | null;
+}
+
+export async function insertLedgerEntries(
+  companyId: string,
+  entries: NewLedgerEntry[],
+): Promise<LedgerEntryRow[]> {
+  if (entries.length === 0) return [];
+  const { data, error } = await getClient()
+    .from("ledger_entries")
+    .insert(
+      entries.map((e) => ({
+        company_id: companyId,
+        decision_id: e.decisionId,
+        source_file_id: e.fileId,
+        source_message_id: e.messageId,
+        entry_date: e.entryDate,
+        kind: e.kind,
+        item: e.item,
+        quantity: e.quantity,
+        unit_price: e.unitPrice,
+        amount: e.amount,
+        counterparty: e.counterparty,
+        payment_method: e.paymentMethod,
+        confidence: e.confidence,
+        status: "confirmed",
+      })),
+    )
+    .select();
+  if (error) fail("insertLedgerEntries", error);
+  return (data ?? []) as LedgerEntryRow[];
+}
+
+export async function getLedgerDaily(
+  companyId: string,
+  startDay: string,
+  endDay: string,
+): Promise<LedgerDailyRow[]> {
+  const { data, error } = await getClient()
+    .from("ledger_daily")
+    .select()
+    .eq("company_id", companyId)
+    .gte("entry_date", startDay)
+    .lte("entry_date", endDay)
+    .order("entry_date", { ascending: true });
+  if (error) fail("getLedgerDaily", error);
+  return (data ?? []) as LedgerDailyRow[];
+}
+
+export async function getWhoOwesMe(
+  companyId: string,
+  limit: number,
+): Promise<WhoOwesRow[]> {
+  const { data, error } = await getClient()
+    .from("who_owes_me")
+    .select()
+    .eq("company_id", companyId)
+    .order("balance", { ascending: false })
+    .limit(limit);
+  if (error) fail("getWhoOwesMe", error);
+  return (data ?? []) as WhoOwesRow[];
 }
 
 export async function listFiles(companyId: string): Promise<FileRow[]> {

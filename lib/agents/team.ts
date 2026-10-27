@@ -1,4 +1,6 @@
-// lib/agents/team.ts — the 7 agents: key, display name, channel, colour, initials.
+// lib/agents/team.ts — the 8 agents: key, display name, channel, colour, initials.
+// Display names are the plain names owners see (AGENTS.md section 6);
+// never show job titles like CEO or Co-Founder.
 
 export interface AgentDef {
   key: string;
@@ -11,52 +13,59 @@ export interface AgentDef {
 export const AGENTS: AgentDef[] = [
   {
     key: "ceo",
-    displayName: "AI Co-Founder / CEO",
+    displayName: "Your team",
     channel: "general",
     colour: "#14532d",
-    initials: "CE",
+    initials: "YT",
+  },
+  {
+    key: "books",
+    displayName: "Books",
+    channel: "books",
+    colour: "#78350f",
+    initials: "BO",
   },
   {
     key: "product",
-    displayName: "Product Manager",
+    displayName: "Plans",
     channel: "product",
     colour: "#0e7490",
-    initials: "PM",
+    initials: "PL",
   },
   {
     key: "marketing",
-    displayName: "Marketing Lead",
+    displayName: "Promotion",
     channel: "marketing",
     colour: "#b45309",
-    initials: "MK",
+    initials: "PR",
   },
   {
     key: "design",
-    displayName: "Designer / Brand",
+    displayName: "Flyers & Catalogue",
     channel: "design",
     colour: "#be123c",
-    initials: "DE",
+    initials: "FC",
   },
   {
     key: "engineering",
-    displayName: "Engineering / Tech Lead",
+    displayName: "Tools & Costs",
     channel: "engineering",
     colour: "#1d4ed8",
-    initials: "EN",
+    initials: "TC",
   },
   {
     key: "sales",
-    displayName: "Sales & Growth",
+    displayName: "Prices & Customers",
     channel: "sales",
     colour: "#15803d",
-    initials: "SA",
+    initials: "PC",
   },
   {
     key: "compliance",
-    displayName: "Operations & Compliance",
+    displayName: "Paperwork",
     channel: "compliance",
     colour: "#57534e",
-    initials: "OC",
+    initials: "PA",
   },
 ];
 

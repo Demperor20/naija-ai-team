@@ -25,6 +25,8 @@ interface Proposal {
   channel_id: string;
   owner_note: string | null;
   createdAt: string;
+  kind: string;
+  payload: unknown;
 }
 
 interface ApiResponse {
@@ -88,6 +90,77 @@ const MARKDOWN_STYLES = [
 const inputClass =
   "w-full rounded-lg border border-stone-300 bg-white px-3 py-2.5 text-base text-stone-900 placeholder:text-stone-400 focus:border-green-900 focus:outline-none";
 const labelClass = "mb-1 block text-sm font-medium text-stone-700";
+
+interface LedgerEntryView {
+  item?: unknown;
+  quantity?: unknown;
+  unit_price?: unknown;
+  unitPrice?: unknown;
+  amount?: unknown;
+  confidence?: unknown;
+}
+
+function ledgerEntriesOf(p: Proposal): LedgerEntryView[] | null {
+  if (p.kind !== "ledger") return null;
+  const payload = p.payload as { entries?: unknown } | null;
+  if (!payload || !Array.isArray(payload.entries)) return null;
+  return payload.entries.filter(
+    (e): e is LedgerEntryView => typeof e === "object" && e !== null,
+  );
+}
+
+function naira(n: unknown): string {
+  return typeof n === "number" && Number.isFinite(n)
+    ? `₦${n.toLocaleString("en-NG")}`
+    : "—";
+}
+
+function LedgerEntriesTable({ entries }: { entries: LedgerEntryView[] }) {
+  return (
+    <div className="mt-2 overflow-x-auto rounded-lg border border-stone-200 bg-white">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-stone-500">
+            <th className="px-2 py-1 font-medium">Item</th>
+            <th className="px-2 py-1 text-right font-medium">Qty</th>
+            <th className="px-2 py-1 text-right font-medium">Price</th>
+            <th className="px-2 py-1 text-right font-medium">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map((e, i) => {
+            const low =
+              typeof e.confidence === "number" && e.confidence < 0.7;
+            return (
+              <tr
+                key={i}
+                className={
+                  low
+                    ? "border-t border-amber-300 bg-amber-100"
+                    : "border-t border-stone-200"
+                }
+                title={low ? "Low confidence — check this row" : undefined}
+              >
+                <td className="px-2 py-1 text-stone-800">
+                  {typeof e.item === "string" && e.item ? e.item : "—"}
+                </td>
+                <td className="px-2 py-1 text-right text-stone-800">
+                  {typeof e.quantity === "number" ? e.quantity : "—"}
+                </td>
+                <td className="px-2 py-1 text-right text-stone-800">
+                  {naira(e.unit_price ?? e.unitPrice)}
+                </td>
+                <td className="px-2 py-1 text-right font-medium text-green-950">
+                  {naira(e.amount)}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export default function TryPage() {
   const [phase, setPhase] = useState<Phase>("intake");
@@ -489,7 +562,7 @@ export default function TryPage() {
                 >
                   {agent.initials}
                 </span>
-                {agent.key === "ceo" ? "CEO" : agent.displayName.split(" ")[0]}
+                {agent.key === "ceo" ? agent.displayName : agent.displayName.split(" ")[0]}
               </button>
             );
           })}
@@ -564,6 +637,12 @@ export default function TryPage() {
                     {agentNameOfKey(p.owner)}
                     {p.priority ? ` · ${p.priority} priority` : ""}
                   </p>
+                  {(() => {
+                    const entries = ledgerEntriesOf(p);
+                    return entries && entries.length > 0 ? (
+                      <LedgerEntriesTable entries={entries} />
+                    ) : null;
+                  })()}
                   {changeFor === p.decision_id ? (
                     <div className="mt-2 space-y-2">
                       <textarea

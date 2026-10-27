@@ -7,6 +7,7 @@ import {
 } from "@/lib/db";
 import { getSessionCompanyId } from "@/lib/session";
 import { decisionToDTO, runTeam } from "@/lib/agents/run";
+import { applyDecision } from "@/lib/decisions";
 
 export const maxDuration = 300;
 
@@ -125,6 +126,18 @@ export async function POST(request: Request) {
           status as DecisionStatus,
           typeof note === "string" ? note : undefined,
         );
+        if (status === "approved") {
+          // The status change above is the source of truth; a failed apply
+          // must not turn the owner's tap into an error.
+          try {
+            await applyDecision(companyId, decisionId);
+          } catch (err) {
+            console.error(
+              `decide apply failed for ${decisionId}:`,
+              err instanceof Error ? err.message : err,
+            );
+          }
+        }
         return NextResponse.json({
           ok: true,
           decisionId: row.decision_id,

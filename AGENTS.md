@@ -19,7 +19,7 @@ Hackathon: Meta Global AI Developer Hackathon, Startup track. Deadline: Wed Nov 
 1. **Every AI call uses a Meta model** through the Meta Model API. No OpenAI, Anthropic or other model providers anywhere, including in dependencies.
 2. **All Meta API code lives in `lib/meta.ts`.** Nothing else calls `api.meta.ai` directly. Model IDs come from environment variables.
 3. **No secrets in the repo or the browser.** Keys come from `process.env` on the server only. No environment variable in this project uses the `NEXT_PUBLIC_` prefix. Never log keys.
-4. **The approval rule is enforced in code, not just prompts.** Agents can only create proposals with `status = 'pending'`. Only the owner's tap (web button or WhatsApp button) changes a status.
+4. **The approval rule is enforced in code, not just prompts.** Agents can only create proposals with `status = 'pending'`, and nothing in a proposal's `payload` (ledger entries, products, files) takes effect until `applyDecision()` runs after the owner approves. Only the owner's tap (web button or WhatsApp button) changes a status.
 5. **Every database read or write is scoped to one company id**, which the server takes from the signed session cookie or the WhatsApp phone number, never from the request body.
 6. **Small, testable steps.** After each task, `npm run build` must pass, and the task's smoke test must pass. Then stop and report.
 7. **Ask before deleting files** or changing `supabase/schema.sql`.
@@ -33,7 +33,7 @@ Hackathon: Meta Global AI Developer Hackathon, Startup track. Deadline: Wed Nov 
 
 ## 4. Environment variables
 
-All server-only. Listed in `.env.example`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_API_KEY`, `META_API_BASE`, `META_TEXT_MODEL`, `META_IMAGE_MODEL`, `META_TRANSCRIBE_MODEL`, `META_SAM_MODEL`, `FIRECRAWL_API_KEY`, `SESSION_SECRET`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`.
+All server-only. Listed in `.env.example`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `META_API_KEY`, `META_API_BASE`, `META_TEXT_MODEL` (Muse Spark), `META_REASONING_MODEL` (Muse Wonder: video and audio understanding, hard reasoning), `META_IMAGE_MODEL` (Muse Image), `META_TRANSCRIBE_MODEL` (Muse Voice Transcribe), `META_SAM_MODEL` (SAM 3.1), `FIRECRAWL_API_KEY`, `SESSION_SECRET`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET`, `WHATSAPP_DRY_RUN` (1 = log sends instead of calling WhatsApp), `WHATSAPP_PUBLIC_NUMBER` (shown on the landing page).
 
 ## 5. Architecture and file map
 
@@ -41,9 +41,9 @@ All server-only. Listed in `.env.example`: `SUPABASE_URL`, `SUPABASE_SERVICE_ROL
 WhatsApp ──► app/api/whatsapp/route.ts ─┐
                                         ├──► lib/agents/run.ts  runTeam()
 Try-it page ► app/api/team/route.ts ────┘        │
-              app/api/start/route.ts (intake)    ├─ CEO (Muse Spark, function calling)
+              app/api/start/route.ts (intake)    ├─ lead agent "Your team" (Muse Spark, function calling)
 Dashboard ──► app/d/[token]/page.tsx             │    ├─ delegate_product / _marketing / _design /
-                                                 │    │  _engineering / _sales / _compliance
+                                                 │    │  _engineering / _sales / _compliance / _books
                                                  │    └─ web_search (Firecrawl)
                                                  ├─ lib/agents/context.ts (profile + approved + history)
                                                  └─ lib/db.ts (Supabase, service role)
@@ -55,7 +55,7 @@ lib/meta.ts  ◄── the ONLY place that calls Meta (chat, vision, image, tran
 | `lib/meta.ts` | `chat()` (messages, tools, JSON schema output, retries, timeout); later `generateImage()`, `transcribe()`, `segment()` |
 | `lib/db.ts` | Server Supabase client + typed helpers for every table in `supabase/schema.sql` |
 | `lib/session.ts` | Signed, httpOnly cookie holding the Try-it company id (HMAC with `SESSION_SECRET`) |
-| `lib/agents/team.ts` | The 7 agents: key, display name, channel, colour, initials |
+| `lib/agents/team.ts` | The 8 agents: key, display name, channel, colour, initials |
 | `lib/agents/prompts.ts` | Loads `prompts/_shared.md` + `prompts/<key>.md` |
 | `lib/agents/context.ts` | Builds the context block for each run |
 | `lib/agents/tools.ts` | Tool definitions and handlers: `web_search`, `delegate_*` |
@@ -79,15 +79,15 @@ lib/meta.ts  ◄── the ONLY place that calls Meta (chat, vision, image, tran
 - `decide` → `{ ok: true, decisionId, status }`
 - Errors → `{ ok: false, error: "<plain-English message>" }`
 
-`Decision = { decision_id, title, description, category, owner, priority, status, channel_id, owner_note, createdAt }`
+`Decision = { decision_id, title, description, category, owner, priority, status, channel_id, owner_note, createdAt, kind, payload, previewUrl? }` (previewUrl = the flyer, catalogue or video file to show on the card)
 
-Channels: `general` (CEO), `product`, `marketing`, `design`, `engineering`, `sales`, `compliance`; `whatsapp` (always the CEO).
+Channels: `general` (CEO), `product`, `marketing`, `design`, `engineering`, `sales`, `compliance`, `books`; `whatsapp` (always the CEO).
 
-Agent keys and display names: `ceo` AI Co-Founder / CEO · `product` Product Manager · `marketing` Marketing Lead · `design` Designer / Brand · `engineering` Engineering / Tech Lead · `sales` Sales & Growth · `compliance` Operations & Compliance.
+Agent keys and the plain display names owners see (never show job titles like CEO or Co-Founder): `ceo` Your team · `product` Plans · `marketing` Promotion · `design` Flyers & Catalogue · `engineering` Tools & Costs · `sales` Prices & Customers · `compliance` Paperwork · `books` Books.
 
 Every agent's **final** answer is JSON:
 ```json
-{ "reply": "string", "decisions": [ { "title": "string", "description": "string", "category": "string", "owner": "agent key", "priority": "high|medium|low" } ] }
+{ "reply": "string", "decisions": [ { "title": "string", "description": "string", "category": "string", "owner": "agent key", "priority": "high|medium|low", "kind": "general|ledger|product|flyer|video|catalogue|statement", "payload": {} } ] }
 ```
 Request it with the Meta API's structured-output option (JSON schema). If parsing fails, retry once with "Return only valid JSON matching the schema." If it fails again, return `{ reply: <raw text>, decisions: [] }`. Never crash.
 
@@ -129,7 +129,63 @@ Look and feel: clean, calm and trustworthy. Off-white background, deep green acc
 
 Prices in naira (₦). Customers mostly buy through WhatsApp, Instagram and walk-ins. Budgets are small; data and power cost money; recommend cheap, phone-first actions. Compliance answers must cite official sources (see `prompts/compliance.md`).
 
-## 11. Definition of done for any task
+## 11. Media pipeline (Day 3+)
+
+Everything the owner sends goes through **`lib/media.ts`** before any agent sees it:
+
+1. **Store** the original in the Supabase Storage bucket `files` under `<companyId>/<yyyy-mm-dd>/<uuid>.<ext>` and add a `files` row (`kind`, `mime`, `made_by: 'owner'`, `message_id`, `meta`).
+2. **Describe** it for the agents, by type:
+   - **audio** → `transcribe()` in `lib/meta.ts` (Muse Voice Transcribe over its real-time WebSocket; convert to the audio format the docs require with `ffmpeg-static`). If that fails, fall back to `META_REASONING_MODEL` (Muse Wonder) with the audio file as input and ask for a verbatim transcript. Reply first with `I heard: "<transcript>"` so mistakes are visible.
+   - **image** → Muse Spark vision: classify it as `sales_record` (notebook, receipt, POS slip, transfer screenshot), `product_photo`, `price_list` or `other`, plus a one-paragraph description.
+   - **video** → Muse Wonder video understanding: a list of products seen (name, best timestamp in seconds) and 3–5 highlight moments (start, end, why).
+3. **Route**: the description, transcript and file ids go into `runTeam()` as `attachments`, so the CEO can delegate (see `prompts/ceo.md`).
+
+Limits: accept images ≤ 10 MB, audio ≤ 3 minutes, video ≤ 60 seconds and ≤ 16 MB (WhatsApp's own limit). Reject larger files with a friendly message.
+
+## 12. Proposal types and `applyDecision()`
+
+Every proposal has a `kind` and a `payload`. When the owner taps Approve, **`lib/decisions.ts` → `applyDecision(companyId, decisionId)`** runs once (set `applied_at`; never apply twice):
+
+| kind | payload | On approve |
+|---|---|---|
+| `general` | `{}` | nothing else; it becomes an approved decision the team builds on |
+| `ledger` | `{ entries: [...] }` (shape in section 13) | insert entries into `ledger_entries` with `status: 'confirmed'`, linked to the decision and source file |
+| `product` | `{ product_ids: [...] }` | set those products to `approved` |
+| `flyer`, `catalogue`, `video`, `statement` | `{ file_id }` | mark the file approved (in `files.meta.approved = true`); on WhatsApp, send the file to the owner ready to forward or post |
+
+Reject → nothing applied. Change → the owner's note goes back to the agent that made it, which makes a new proposal.
+
+## 13. Books (Day 4)
+
+- New agent `books` (`prompts/books.md`). Entry shape: `{ entry_date, kind: sale|expense|debt_given|debt_paid|stock_in, item, quantity, unit_price, amount, counterparty, payment_method, confidence }`, amounts in naira.
+- The Books agent gets the image (or transcript) and the last 30 confirmed entries (for duplicate checks), and returns one `ledger` proposal per batch.
+- Server-side checks before saving the proposal: amounts are numbers ≥ 0; `quantity × unit_price ≈ amount` when both exist (flag it in the reply if not); dates are not in the future.
+- Queries come from the views `ledger_daily` and `who_owes_me` (see `supabase/schema-v3.sql`): "how did I do this week", "who owes me".
+
+## 14. Catalogue and flyers (Day 5)
+
+- **Cutout**: `segment()` in `lib/meta.ts` calls SAM 3.1 with the photo and a text prompt naming the product; `lib/images.ts` (using `sharp`) applies the mask and places the product on a clean background in the brand colour → a `cutout` file.
+- **Products**: Flyers & Catalogue names each product; prices come from the owner (Prices & Customers asks for missing ones). New products are `pending` inside a `product` proposal.
+- **Catalogue image**: `lib/images.ts` lays out approved products (cutout, name, price) in a grid, 1080×1350, brand colours → a `catalogue` file and a `catalogue` proposal.
+- **Flyer**: the `make_flyer` tool calls `generateImage()` (Muse Image) for a background with NO text, then `lib/images.ts` writes the exact headline, price and call to action on top with an embedded font (Work Sans and Anton TTF files in `assets/fonts/`, from Google Fonts, Open Font License). 1080×1920 for Status. → a `flyer` file and a `flyer` proposal.
+
+## 15. Marketing videos (Day 6)
+
+- Input: an owner video (≤ 60 s). Muse Wonder returns highlight moments; Promotion writes captions, an opening line and a call to action (`prompts/marketing.md`).
+- `lib/video.ts` uses `ffmpeg-static` to: cut the chosen moments, crop/scale to vertical 1080×1920, burn in captions with the embedded font, add a 2-second end card (business name + "Order on WhatsApp"), keep total length 15–30 s, H.264 + AAC, ≤ 16 MB → a `marketing_video` file and a `video` proposal.
+- Run it as a `media_jobs` row (`queued → running → done/failed`) so a slow render never blocks the chat. Tell the owner "Your video is cooking, I'll send it in a few minutes."
+- If the video job is too heavy for Vercel's time or memory limits, keep output at 720×1280 and ≤ 20 s.
+
+## 16. Statement (Day 7)
+
+`lib/statement.ts` builds a one- or two-page PDF (with `pdf-lib`) for a chosen month: business name, owner, totals (sales, costs, profit), weekly breakdown, top items, money owed to the business, and a list of every confirmed entry with its date and a short code linking to its source file. Footer: "Records confirmed by the owner from their own notebook photos, receipts and voice notes. Designed to share with lenders; not audited accounts." → a `statement` file and proposal.
+
+## 17. Dashboard and Try-it upgrades (Day 7)
+
+- `/d/[token]`: this week's sales, costs, profit (from `ledger_daily`); who owes me; pending proposals; the catalogue; generated flyers and videos; a statement download; and an agent trace per message (agent, Meta model, step, ms).
+- `/try`: add a record button (browser `MediaRecorder` → audio upload), photo upload and video upload, all through the same `lib/media.ts` → `runTeam()` path with `source: 'tryit'`. Proposal cards show previews (image, video player) and the entries table for `ledger` proposals.
+
+## 18. Definition of done for any task
 
 - `npm run build` passes with no type errors.
 - The task's smoke test passes, or you explain exactly why not.

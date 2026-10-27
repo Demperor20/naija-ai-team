@@ -1,20 +1,37 @@
 // lib/agents/run.ts — runTeam(): the agent loop (AGENTS.md section 7).
 
-import { chat, type MetaMessage, type MetaToolCallRequest } from "../meta";
+import {
+  chat,
+  type MetaContentPart,
+  type MetaMessage,
+  type MetaToolCallRequest,
+} from "../meta";
 import {
   getApprovedDecisions,
   getCompany,
   getRecentMessages,
+  listConfirmedLedgerEntries,
   saveAgentRun,
   saveDecisions,
   saveMessage,
   type Company,
   type Decision,
+  type LedgerEntryRow,
 } from "../db";
+import { validateLedgerPayload } from "../decisions";
 import { agentForChannel, getAgent, isAgentKey } from "./team";
 import { loadSystemPrompt } from "./prompts";
-import { buildContextBlock, buildDelegateContext } from "./context";
-import { getToolsFor, handleWebSearch } from "./tools";
+import {
+  buildContextBlock,
+  buildDelegateContext,
+  type ContextAttachment,
+} from "./context";
+import {
+  getToolsFor,
+  handleBooksSummary,
+  handleWebSearch,
+  handleWhoOwesMe,
+} from "./tools";
 
 export interface RunTeamInput {
   companyId: string;
@@ -22,7 +39,7 @@ export interface RunTeamInput {
   message: string;
   source: "tryit" | "whatsapp";
   isKickoff?: boolean;
-  attachments?: Array<{ kind: string; url: string; mime?: string }>;
+  attachments?: ContextAttachment[];
 }
 
 export interface DecisionDTO {
@@ -36,6 +53,8 @@ export interface DecisionDTO {
   channel_id: string;
   owner_note: string | null;
   createdAt: string;
+  kind: string;
+  payload: unknown;
 }
 
 export interface RunTeamResult {
@@ -66,8 +85,29 @@ const FINAL_JSON_SCHEMA = {
           category: { type: "string" },
           owner: { type: "string" },
           priority: { type: "string" },
+          kind: {
+            type: "string",
+            enum: [
+              "general",
+              "ledger",
+              "product",
+              "flyer",
+              "video",
+              "catalogue",
+              "statement",
+            ],
+          },
+          payload: { type: "object" },
         },
-        required: ["title", "description", "category", "owner", "priority"],
+        required: [
+          "title",
+          "description",
+          "category",
+          "owner",
+          "priority",
+          "kind",
+          "payload",
+        ],
       },
     },
   },
@@ -80,7 +120,19 @@ interface NormalizedProposal {
   category: string;
   owner: string;
   priority: "high" | "medium" | "low";
+  kind: string;
+  payload: Record<string, unknown>;
 }
+
+const PROPOSAL_KINDS = [
+  "general",
+  "ledger",
+  "product",
+  "flyer",
+  "video",
+  "catalogue",
+  "statement",
+];
 
 interface StepRecord {
   agentKey: string;
@@ -103,6 +155,65 @@ interface LoopContext {
   deadline: number;
   source: "tryit" | "whatsapp";
   today: string;
+  ledgerRecent?: LedgerEntryRow[];
+}
+
+// Images over this size are described by text only (the full file stays in
+// Storage and on the message row); smaller ones also go to the model.
+const MAX_INLINE_IMAGE_BYTES = 6 * 1024 * 1024;
+
+async function fetchImagePart(url: string): Promise<MetaContentPart | null> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length === 0 || buf.length > MAX_INLINE_IMAGE_BYTES) return null;
+    const mime =
+      res.headers.get("content-type")?.split(";")[0].trim() || "image/jpeg";
+    return {
+      type: "image_url",
+      image_url: { url: `data:${mime};base64,${buf.toString("base64")}` },
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Server-side checks before saving ledger proposals (AGENTS.md section 13):
+// invalid entries are dropped, everything else is flagged in the reply.
+function gateLedgerProposals(
+  reply: string,
+  decisions: NormalizedProposal[],
+): { reply: string; decisions: NormalizedProposal[] } {
+  const kept: NormalizedProposal[] = [];
+  const flags: string[] = [];
+  for (const d of decisions) {
+    if (d.kind !== "ledger") {
+      kept.push(d);
+      continue;
+    }
+    const validated = validateLedgerPayload(d.payload);
+    if (validated.entries.length === 0) {
+      flags.push(
+        `“${d.title}”: I couldn't read any valid sales lines, so nothing was recorded.`,
+      );
+      continue;
+    }
+    for (const w of validated.warnings) {
+      flags.push(`“${d.title}”: ${w}.`);
+    }
+    kept.push({
+      ...d,
+      payload: { ...d.payload, entries: validated.entries },
+    });
+  }
+  // Always return `kept`: even with zero warnings the ledger payloads in
+  // `kept` are the validated/normalized ones, never the raw model output.
+  if (flags.length === 0) return { reply, decisions: kept };
+  return {
+    reply: `${reply}\n\n_Please double-check:_\n${flags.map((f) => `- ${f}`).join("\n")}`,
+    decisions: kept,
+  };
 }
 
 function short(text: string, max = 300): string {
@@ -121,6 +232,8 @@ export function decisionToDTO(d: Decision): DecisionDTO {
     channel_id: d.channel_id,
     owner_note: d.owner_note,
     createdAt: d.created_at,
+    kind: d.kind,
+    payload: d.payload,
   };
 }
 
@@ -160,6 +273,16 @@ function tryParseFinal(
       item.priority === "low"
         ? item.priority
         : "medium";
+    const kind =
+      typeof item.kind === "string" && PROPOSAL_KINDS.includes(item.kind)
+        ? item.kind
+        : "general";
+    const payload =
+      typeof item.payload === "object" &&
+      item.payload !== null &&
+      !Array.isArray(item.payload)
+        ? (item.payload as Record<string, unknown>)
+        : {};
     normalized.push({
       title: item.title.trim().slice(0, 200),
       description:
@@ -167,6 +290,8 @@ function tryParseFinal(
       category: typeof item.category === "string" ? item.category : "general",
       owner,
       priority,
+      kind,
+      payload,
     });
   }
   return { reply, decisions: normalized };
@@ -229,6 +354,36 @@ async function executeTool(
     }
   }
 
+  if (call.name === "books_summary" || call.name === "who_owes_me") {
+    const args = parseToolArgs(call.arguments);
+    if (!args) return fail(`could not parse ${call.name} arguments as JSON.`);
+    try {
+      const result =
+        call.name === "books_summary"
+          ? await handleBooksSummary(ctx.company.id, args)
+          : await handleWhoOwesMe(ctx.company.id);
+      return {
+        text: short(JSON.stringify(result), 4000),
+        steps: [
+          {
+            agentKey: parentAgentKey,
+            model: parentModel,
+            step: "tool",
+            detail: short(
+              call.name === "books_summary"
+                ? `books_summary(${(args.period as string) ?? "week"})`
+                : "who_owes_me()",
+            ),
+            ms: Date.now() - started,
+          },
+        ],
+      };
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      return fail(`${call.name} failed: ${detail}`);
+    }
+  }
+
   if (call.name.startsWith("delegate_")) {
     const specialistKey = call.name.slice("delegate_".length);
     const specialist = getAgent(specialistKey);
@@ -273,13 +428,43 @@ async function executeTool(
   return fail(`unknown tool: ${call.name}.`);
 }
 
+function withLedgerSection(
+  agentKey: string,
+  userContent: string | MetaContentPart[],
+  entries: LedgerEntryRow[] | undefined,
+): string | MetaContentPart[] {
+  if (agentKey !== "books" || !entries?.length) return userContent;
+  const lines = entries.map((e) => {
+    const qty =
+      e.quantity !== null && e.quantity !== undefined
+        ? ` ×${e.quantity}`
+        : "";
+    const price =
+      e.unit_price !== null && e.unit_price !== undefined
+        ? ` @₦${Number(e.unit_price).toLocaleString("en-NG")}`
+        : "";
+    const who = e.counterparty ? ` (${e.counterparty})` : "";
+    return `- ${e.entry_date} | ${e.kind} | ${e.item ?? "(no item)"}${qty}${price} = ₦${Number(e.amount).toLocaleString("en-NG")}${who}`;
+  });
+  const section = `\n\nRECENT CONFIRMED ENTRIES (for duplicate checks — do not record these again; flag possible duplicates):\n${lines.join("\n")}`;
+  if (typeof userContent === "string") return userContent + section;
+  return userContent.map((p) =>
+    p.type === "text" ? { ...p, text: p.text + section } : p,
+  );
+}
+
 async function runLoop(args: {
   agentKey: string;
   system: string;
-  userContent: string;
+  userContent: string | MetaContentPart[];
   ctx: LoopContext;
 }): Promise<LoopResult> {
-  const { agentKey, system, userContent, ctx } = args;
+  const { agentKey, system, ctx } = args;
+  const userContent = withLedgerSection(
+    agentKey,
+    args.userContent,
+    ctx.ledgerRecent,
+  );
   const tools = getToolsFor(agentKey);
   const maxRounds =
     agentKey === "ceo" ? CEO_MAX_ROUNDS : SPECIALIST_MAX_ROUNDS;
@@ -375,8 +560,9 @@ async function runLoop(args: {
       });
       const parsed = tryParseFinal(first.text, agentKey);
       if (parsed) {
-        reply = parsed.reply;
-        decisions = parsed.decisions;
+        const gated = gateLedgerProposals(parsed.reply, parsed.decisions);
+        reply = gated.reply;
+        decisions = gated.decisions;
       } else {
         const retry = await chat({
           messages: [
@@ -394,8 +580,9 @@ async function runLoop(args: {
         lastModel = retry.model;
         const reparsed = tryParseFinal(retry.text, agentKey);
         if (reparsed) {
-          reply = reparsed.reply;
-          decisions = reparsed.decisions;
+          const gated = gateLedgerProposals(reparsed.reply, reparsed.decisions);
+          reply = gated.reply;
+          decisions = gated.decisions;
         } else {
           steps.push({
             agentKey,
@@ -444,23 +631,43 @@ export async function runTeam(input: RunTeamInput): Promise<RunTeamResult> {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
+  // The Books agent gets the last 30 confirmed entries for duplicate checks
+  // (loaded for the CEO too, since it may delegate to Books).
+  const ledgerRecent =
+    agent.key === "books" || agent.key === "ceo"
+      ? await listConfirmedLedgerEntries(input.companyId, 30)
+      : undefined;
   const ctx: LoopContext = {
     company,
     approved,
     deadline,
     source: input.source,
     today,
+    ledgerRecent,
   };
+  // Image attachments go to the model itself, not just as descriptions.
+  const imageParts: MetaContentPart[] = [];
+  for (const a of input.attachments ?? []) {
+    if (a.mime?.startsWith("image/") && a.url) {
+      const part = await fetchImagePart(a.url);
+      if (part) imageParts.push(part);
+    }
+  }
+  const contextText = buildContextBlock({
+    company,
+    approvedDecisions: approved,
+    recentMessages: recent,
+    isKickoff: input.isKickoff ?? false,
+    message: input.message,
+    attachments: input.attachments,
+  });
   const loop = await runLoop({
     agentKey: agent.key,
     system: systemPromptFor(agent.key, ctx),
-    userContent: buildContextBlock({
-      company,
-      approvedDecisions: approved,
-      recentMessages: recent,
-      isKickoff: input.isKickoff ?? false,
-      message: input.message,
-    }),
+    userContent:
+      imageParts.length > 0
+        ? [{ type: "text", text: contextText }, ...imageParts]
+        : contextText,
     ctx,
   });
 

@@ -2,12 +2,21 @@
 
 import type { Company, Decision, Message } from "../db";
 
+export interface ContextAttachment {
+  kind: string;
+  url?: string;
+  fileId?: string;
+  mime?: string;
+  description?: string;
+}
+
 export interface ContextInput {
   company: Company;
   approvedDecisions: Decision[];
   recentMessages: Message[]; // oldest first
   isKickoff: boolean;
   message: string;
+  attachments?: ContextAttachment[];
 }
 
 function profileLines(company: Company): string[] {
@@ -62,6 +71,13 @@ export function buildContextBlock(input: ContextInput): string {
   } else {
     lines.push("OWNER MESSAGE");
     lines.push(input.message);
+  }
+  if (input.attachments?.length) {
+    lines.push("", "ATTACHMENTS (what the owner just sent)");
+    input.attachments.forEach((a, i) => {
+      const id = a.fileId ? ` file ${a.fileId}` : "";
+      lines.push(`${i + 1}. [${a.kind}]${id}: ${a.description || a.url || "(no description)"}`);
+    });
   }
   return lines.join("\n");
 }

@@ -1,12 +1,11 @@
-# Starter pack: where these files go
+# Part 2 pack: where these files go
 
-Put everything in this folder into your NEW, EMPTY `naija-ai-team` repo folder.
+Unzip into your naija-ai-team project folder and let it replace existing files.
 
-- AGENTS.md            → the spec Muse Code follows
-- MUSE_CODE_PROMPTS.md → the prompts to paste into Muse Code, in order
-- HACKATHON.md         → what was built during the hackathon (update daily)
-- .env.example         → every key the app needs (copy it to .env.local)
-- prompts/             → the 7 agents' instructions
-- supabase/schema.sql  → the database: run it once in Supabase → SQL Editor
+- AGENTS.md                    → updated spec (media, books, catalogue, flyers, videos, statement)
+- MUSE_CODE_PROMPTS_PART2.md   → Prompts 7–14, in order (read "Before Prompt 7" first)
+- .env.example                 → adds META_REASONING_MODEL, WHATSAPP_DRY_RUN, WHATSAPP_PUBLIC_NUMBER
+- prompts/                     → adds books.md; updates ceo.md, design.md, marketing.md, _shared.md
+- supabase/schema-v3.sql       → run in Supabase AFTER schema.sql
 
-Then follow "Tonight, Oct 26" in your build plan doc.
+Your existing HACKATHON.md and MUSE_CODE_PROMPTS.md stay as they are.

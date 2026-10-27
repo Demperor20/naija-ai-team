@@ -21,6 +21,9 @@ function showResult(label: string, result: RunTeamResult): void {
   console.log(result.reply);
   console.log("decisions:");
   console.log(JSON.stringify(result.decisions, null, 2));
+  for (const d of result.decisions) {
+    console.log(`kind=${d.kind} | ${d.title}`);
+  }
 }
 
 async function showTrace(

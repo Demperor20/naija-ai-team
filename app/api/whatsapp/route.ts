@@ -10,19 +10,31 @@ import {
   type WhatsappUser,
 } from "@/lib/db";
 import { runTeam } from "@/lib/agents/run";
+import { applyDecision } from "@/lib/decisions";
 import {
+  downloadMedia,
   sendProposalButtons,
   sendText,
   verifySignature,
 } from "@/lib/whatsapp";
+import { MediaError, processMedia } from "@/lib/media";
 
 export const maxDuration = 300;
+
+interface WaMedia {
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+}
 
 interface WaMessage {
   id?: string;
   from?: string;
   type?: string;
   text?: { body?: string };
+  image?: WaMedia;
+  audio?: WaMedia;
+  video?: WaMedia;
   interactive?: {
     type?: string;
     button_reply?: { id?: string; title?: string };
@@ -131,11 +143,23 @@ async function handleMessage(message: WaMessage): Promise<void> {
       message.interactive.button_reply?.id
     ) {
       await handleButton(from, message.interactive.button_reply.id);
+    } else if (
+      (message.type === "image" && message.image?.id) ||
+      (message.type === "audio" && message.audio?.id) ||
+      (message.type === "video" && message.video?.id)
+    ) {
+      const media =
+        message.type === "image"
+          ? message.image
+          : message.type === "audio"
+            ? message.audio
+            : message.video;
+      await handleMedia(from, media as WaMedia);
     } else {
       await trySend(from, "unsupported", () =>
         sendText(
           from,
-          "Sorry, I can only read text messages for now. Please send your message as text.",
+          "Sorry, I can use photos, voice notes, short videos and text. Please send one of those.",
         ),
       );
     }
@@ -163,6 +187,97 @@ async function sendReplyWithProposals(
       sendProposalButtons(phone, d.title, d.description, d.decision_id),
     );
   }
+}
+
+async function handleMedia(phone: string, media: WaMedia): Promise<void> {
+  const user = await getWhatsappUser(phone);
+  if (!user || !user.company_id) {
+    const step = user?.onboarding_step ?? "start";
+    if (step === "start") {
+      await upsertWhatsappUser({
+        phone,
+        onboardingStep: "await_name",
+        onboardingData: {},
+      });
+      await trySend(phone, "greeting", () =>
+        sendText(
+          phone,
+          "Hello! I'm your AI business team. Let's set you up first — what's your name? (Please resend your photo, voice note or video after.)",
+        ),
+      );
+    } else {
+      await trySend(phone, "onboarding-nudge", () =>
+        sendText(
+          phone,
+          "One thing at a time — please answer the question above first, then resend your photo, voice note or video.",
+        ),
+      );
+    }
+    return;
+  }
+  let downloaded;
+  try {
+    downloaded = await downloadMedia(media.id as string);
+  } catch (err) {
+    console.error(
+      "whatsapp media download failed:",
+      err instanceof Error ? err.message : err,
+    );
+    await trySend(phone, "download-failed", () =>
+      sendText(
+        phone,
+        "Sorry, I couldn't fetch that file. Please send it again.",
+      ),
+    );
+    return;
+  }
+  let processed;
+  try {
+    processed = await processMedia({
+      companyId: user.company_id,
+      buffer: downloaded.buffer,
+      mime: downloaded.mimeType,
+    });
+  } catch (err) {
+    if (err instanceof MediaError) {
+      await trySend(phone, "media-limit", () =>
+        sendText(phone, err.userMessage),
+      );
+      return;
+    }
+    throw err;
+  }
+  if (processed.kind === "audio" && processed.transcript) {
+    await trySend(phone, "heard", () =>
+      sendText(phone, `I heard: "${processed.transcript}"`),
+    );
+  }
+  await trySend(phone, "ack", () =>
+    sendText(phone, "Got it — the team is on it."),
+  );
+  const caption = media.caption?.trim();
+  const fallbackText =
+    processed.kind === "audio"
+      ? "(Sent a voice note)"
+      : processed.kind === "video"
+        ? "(Sent a video)"
+        : "(Sent a photo)";
+  const result = await runTeam({
+    companyId: user.company_id,
+    channelId: "whatsapp",
+    message: caption || fallbackText,
+    source: "whatsapp",
+    attachments: [
+      {
+        kind: processed.fileKind,
+        url: processed.url,
+        fileId: processed.fileId,
+        mime: processed.mime,
+        description: processed.description,
+      },
+    ],
+  });
+  await sendReplyWithProposals(phone, result.reply, result.decisions);
 }
 
 async function handleText(phone: string, body: string): Promise<void> {
@@ -248,6 +363,16 @@ async function handleButton(phone: string, buttonId: string): Promise<void> {
     return;
   }
   await setDecisionStatus(user.company_id, decisionId, status);
+  if (status === "approved") {
+    try {
+      await applyDecision(user.company_id, decisionId);
+    } catch (err) {
+      console.error(
+        `whatsapp apply failed for ${decisionId}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
   await trySend(phone, "decided", () =>
     sendText(
       phone,
