@@ -30,7 +30,7 @@ import {
   setMediaJobDone,
   setMediaJobFailed,
 } from "./db";
-import { sendProposalButtons, sendText, sendVideo } from "./whatsapp";
+import { getProvider } from "./whatsapp";
 
 export const VIDEO_JOB_KIND = "marketing_video";
 export const MAX_VIDEO_BYTES = 16 * 1024 * 1024;
@@ -607,7 +607,7 @@ export async function runMarketingVideoJob(
       "Sorry, your video didn't work out. Please send the clip again, or a shorter one, and I'll try again.";
     if (source === "whatsapp" && phone) {
       try {
-        await sendText(phone, note);
+        await getProvider().sendText(phone, note);
       } catch (err) {
         console.error(
           `video job ${jobId} failure notice failed:`,
@@ -740,18 +740,19 @@ export async function runMarketingVideoJob(
 
     if (source === "whatsapp" && phone) {
       try {
-        await sendVideo(
+        const wa = getProvider();
+        await wa.sendMedia(
           phone,
-          rendered.buffer,
-          "video/mp4",
-          "Your promo video is ready — tap below to approve it before it is posted anywhere.",
+          url,
+          "Your promo video is ready — approve it before it is posted anywhere.",
         );
-        await sendProposalButtons(
-          phone,
-          proposal.title,
-          proposal.description,
-          proposal.decision_id,
-        );
+        await wa.sendProposals(phone, [
+          {
+            decision_id: proposal.decision_id,
+            title: proposal.title,
+            description: proposal.description,
+          },
+        ]);
       } catch (err) {
         console.error(
           `video job ${jobId} done-notice failed:`,

@@ -20,7 +20,8 @@
     "react-dom": "19.3.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "sharp": "^0.35.5"
+    "sharp": "^0.35.5",
+    "twilio": "^6.2.0"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
