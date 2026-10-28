@@ -18,7 +18,13 @@ const RATES: Array<{ match: string; inputPerM: number; outputPerM: number }> = [
   { match: "wonder", inputPerM: 4.0, outputPerM: 20.0 },
 ];
 
-function rateFor(model: string): { inputPerM: number; outputPerM: number } | null {
+function rateFor(
+  model: string,
+  provider: string | null,
+): { inputPerM: number; outputPerM: number } | null {
+  // Baseten serves the open-weight model under its own pricing: never apply
+  // Meta Model API rates to it (its id also contains "spark").
+  if (provider === "baseten") return null;
   const lower = model.toLowerCase();
   for (const r of RATES) {
     if (lower.includes(r.match)) return r;
@@ -52,7 +58,7 @@ async function main(): Promise<void> {
       const o = r.outputTokens ?? 0;
       input += i;
       output += o;
-      const rate = rateFor(r.model);
+      const rate = rateFor(r.model, r.provider);
       if (!rate) {
         unpriced++;
         continue;

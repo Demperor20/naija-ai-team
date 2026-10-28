@@ -40,7 +40,7 @@ async function showTrace(
   console.log(`--- ${label} (${runs.length} steps) ---`);
   for (const r of runs) {
     console.log(
-      `${r.agent_key} | ${r.step} | ${r.model} | ${r.ms ?? "?"}ms | ${(r.detail ?? "").slice(0, 120)}`,
+      `${r.agent_key} | ${r.step} | ${r.provider ?? "unknown"} | ${r.model} | ${r.ms ?? "?"}ms | ${(r.detail ?? "").slice(0, 120)}`,
     );
   }
 }

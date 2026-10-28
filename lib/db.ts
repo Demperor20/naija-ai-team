@@ -102,6 +102,7 @@ export interface AgentRun {
   ms: number | null;
   input_tokens: number | null;
   output_tokens: number | null;
+  provider: string | null;
   created_at: string;
 }
 
@@ -431,6 +432,7 @@ export interface NewAgentRun {
   ms?: number;
   inputTokens?: number;
   outputTokens?: number;
+  provider?: string;
 }
 
 let warnedMissingTokenColumns = false;
@@ -447,22 +449,26 @@ export async function saveAgentRun(input: NewAgentRun): Promise<AgentRun> {
   };
   if (input.inputTokens !== undefined) row.input_tokens = input.inputTokens;
   if (input.outputTokens !== undefined) row.output_tokens = input.outputTokens;
+  if (input.provider !== undefined) row.provider = input.provider;
   const first = await getClient().from("agent_runs").insert(row).select().single();
   if (!first.error) return first.data as AgentRun;
-  // Transitional fallback: schema-v4.sql (token columns) not run yet.
-  // Anything else is a real failure and still throws.
+  // Transitional fallback: schema-v4.sql (token columns) or schema-v5.sql
+  // (provider column) not run yet. Anything else is a real failure.
   if (
-    (input.inputTokens !== undefined || input.outputTokens !== undefined) &&
-    /input_tokens|output_tokens/.test(first.error.message)
+    (input.inputTokens !== undefined ||
+      input.outputTokens !== undefined ||
+      input.provider !== undefined) &&
+    /input_tokens|output_tokens|provider/.test(first.error.message)
   ) {
     if (!warnedMissingTokenColumns) {
       warnedMissingTokenColumns = true;
       console.warn(
-        "db.saveAgentRun: token columns missing, run supabase/schema-v4.sql; saving without tokens",
+        "db.saveAgentRun: token/provider columns missing, run supabase/schema-v4.sql and schema-v5.sql; saving without them",
       );
     }
     delete row.input_tokens;
     delete row.output_tokens;
+    delete row.provider;
     const second = await getClient().from("agent_runs").insert(row).select().single();
     if (!second.error) return second.data as AgentRun;
   }
@@ -472,21 +478,35 @@ export async function saveAgentRun(input: NewAgentRun): Promise<AgentRun> {
 // Model + token counts per agent step, for the cost report.
 export async function listAgentRunUsage(
   companyId: string,
-): Promise<Array<{ model: string; step: string; inputTokens: number | null; outputTokens: number | null }>> {
+): Promise<
+  Array<{
+    model: string;
+    step: string;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    provider: string | null;
+  }>
+> {
   const { data, error } = await getClient()
     .from("agent_runs")
-    .select("model, step, input_tokens, output_tokens")
+    .select("model, step, input_tokens, output_tokens, provider")
     .eq("company_id", companyId);
   if (error) {
     // Transitional fallback, as in saveAgentRun.
-    if (/input_tokens|output_tokens/.test(error.message)) {
+    if (/input_tokens|output_tokens|provider/.test(error.message)) {
       const retry = await getClient()
         .from("agent_runs")
         .select("model, step")
         .eq("company_id", companyId);
       if (retry.error) fail("listAgentRunUsage", retry.error);
       return ((retry.data ?? []) as Array<{ model: string; step: string }>).map(
-        (r) => ({ model: r.model, step: r.step, inputTokens: null, outputTokens: null }),
+        (r) => ({
+          model: r.model,
+          step: r.step,
+          inputTokens: null,
+          outputTokens: null,
+          provider: null,
+        }),
       );
     }
     fail("listAgentRunUsage", error);
@@ -496,11 +516,13 @@ export async function listAgentRunUsage(
     step: string;
     input_tokens: number | null;
     output_tokens: number | null;
+    provider: string | null;
   }>).map((r) => ({
     model: r.model,
     step: r.step,
     inputTokens: r.input_tokens,
     outputTokens: r.output_tokens,
+    provider: r.provider,
   }));
 }
 

@@ -37,6 +37,20 @@ export interface ChatUsage {
   outputTokens: number;
 }
 
+// Which API served the call: Meta's own Model API, or a Meta open-weight
+// model (Muse Spark Open) served by Baseten's OpenAI-compatible API.
+export type ModelProvider = "meta" | "baseten";
+
+// Muse Spark Open on Baseten. The hackathon brief names
+// "meta-models/muse-spark-open-1026", but that ID 404s on the public
+// serverless gateway — the live ID there is "meta-models/muse-spark-open".
+// Set BASETEN_MODEL to switch IDs without a code change.
+export const BASETEN_MODEL = "meta-models/muse-spark-open";
+
+function basetenModel(override?: string): string {
+  return override ?? process.env.BASETEN_MODEL ?? BASETEN_MODEL;
+}
+
 export interface ChatResult {
   text: string;
   toolCalls: MetaToolCallRequest[];
@@ -45,6 +59,10 @@ export interface ChatResult {
   ms: number;
   // Token counts when the API returns them (null for models that don't).
   usage: ChatUsage | null;
+  provider: ModelProvider;
+  // True when the Baseten call failed and this result came from the Meta
+  // API fallback instead.
+  fallback: boolean;
 }
 
 export interface ChatArgs {
@@ -60,15 +78,25 @@ export interface ChatArgs {
   model?: string;
   timeoutMs?: number;
   temperature?: number;
+  // Model API to call. Default "meta". "baseten" falls back to Meta once
+  // (with META_TEXT_MODEL) when the Baseten call fails or times out.
+  provider?: ModelProvider;
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000;
-// Every Meta API call: one attempt plus exactly one retry.
+// Every model API call: one attempt plus exactly one retry.
 const MAX_RETRIES = 1;
 
 function endpoint(): string {
   const base = process.env.META_API_BASE;
   if (!base) throw new Error("Missing META_API_BASE environment variable");
+  if (base.endsWith("/chat/completions")) return base;
+  return `${base.replace(/\/+$/, "")}/chat/completions`;
+}
+
+function basetenEndpoint(): string {
+  const base = process.env.BASETEN_BASE_URL;
+  if (!base) throw new Error("Missing BASETEN_BASE_URL environment variable");
   if (base.endsWith("/chat/completions")) return base;
   return `${base.replace(/\/+$/, "")}/chat/completions`;
 }
@@ -112,66 +140,63 @@ function parseUsage(
   return { inputTokens: input ?? 0, outputTokens: output ?? 0 };
 }
 
-function errorMessage(status: number, bodyText: string): string {
+function errorMessage(
+  label: string,
+  status: number,
+  bodyText: string,
+): string {
   const snippet = bodyText.slice(0, 300);
   if (status === 401 || status === 403) {
-    return `Meta API auth failed (HTTP ${status}). Check META_API_KEY.`;
+    return `${label} auth failed (HTTP ${status}). Check ${label === "Baseten" ? "BASETEN_API_KEY" : "META_API_KEY"}.`;
   }
   if (status === 404) {
-    return `Meta API endpoint not found (HTTP 404). Check META_API_BASE.`;
+    return `${label} endpoint or model not found (HTTP 404). Check ${label === "Baseten" ? "BASETEN_BASE_URL and BASETEN_MODEL" : "META_API_BASE"}.`;
   }
   if (status === 429) {
-    return `Meta API rate limited (HTTP 429)${snippet ? `: ${snippet}` : ""}`;
+    return `${label} rate limited (HTTP 429)${snippet ? `: ${snippet}` : ""}`;
   }
-  return `Meta API request failed (HTTP ${status})${snippet ? `: ${snippet}` : ""}`;
+  return `${label} request failed (HTTP ${status})${snippet ? `: ${snippet}` : ""}`;
 }
 
-export async function chat(args: ChatArgs): Promise<ChatResult> {
-  const apiKey = process.env.META_API_KEY;
-  if (!apiKey) throw new Error("Missing META_API_KEY environment variable");
-  const model = args.model ?? process.env.META_TEXT_MODEL;
-  if (!model) throw new Error("Missing META_TEXT_MODEL environment variable");
-  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const url = endpoint();
+interface ViaConfig {
+  provider: ModelProvider;
+  label: string;
+  url: string;
+  apiKey: string;
+  model: string;
+  maxRetries: number;
+}
 
-  const body: Record<string, unknown> = {
-    model,
-    messages: args.messages.map(toWireMessage),
-  };
-  if (args.tools?.length) body.tools = args.tools;
-  if (args.temperature !== undefined) body.temperature = args.temperature;
-  if (args.jsonSchema) {
-    body.response_format = {
-      type: "json_schema",
-      json_schema: {
-        name: "response",
-        strict: args.strictJson ?? false,
-        schema: args.jsonSchema,
-      },
-    };
-  }
-
+async function chatVia(
+  cfg: ViaConfig,
+  timeoutMs: number,
+  body: Record<string, unknown>,
+): Promise<ChatResult> {
   const started = Date.now();
   let lastError: unknown = null;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= cfg.maxRetries; attempt++) {
     if (attempt > 0) await sleep(500 * 2 ** (attempt - 1));
     try {
-      const res = await fetch(url, {
+      const res = await fetch(cfg.url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${cfg.apiKey}`,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429 || res.status >= 500) {
-        lastError = new Error(errorMessage(res.status, await res.text()));
+        lastError = new Error(
+          errorMessage(cfg.label, res.status, await res.text()),
+        );
         continue; // retry
       }
       if (!res.ok) {
-        throw new Error(errorMessage(res.status, await res.text()));
+        throw new Error(
+          errorMessage(cfg.label, res.status, await res.text()),
+        );
       }
       const raw = (await res.json()) as {
         model?: string;
@@ -215,13 +240,15 @@ export async function chat(args: ChatArgs): Promise<ChatResult> {
         toolCalls,
         raw,
         model:
-          typeof raw.model === "string" && raw.model ? raw.model : model,
+          typeof raw.model === "string" && raw.model ? raw.model : cfg.model,
         ms: Date.now() - started,
         usage,
+        provider: cfg.provider,
+        fallback: false,
       };
     } catch (err) {
       // Retry network errors and timeouts; rethrow API errors immediately.
-      if (err instanceof Error && err.message.startsWith("Meta API ")) {
+      if (err instanceof Error && err.message.startsWith(`${cfg.label} `)) {
         throw err;
       }
       lastError = err;
@@ -230,7 +257,97 @@ export async function chat(args: ChatArgs): Promise<ChatResult> {
 
   throw lastError instanceof Error
     ? lastError
-    : new Error("Meta API request failed after retries");
+    : new Error(`${cfg.label} request failed after retries`);
+}
+
+export async function chat(args: ChatArgs): Promise<ChatResult> {
+  const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const provider = args.provider ?? "meta";
+
+  if (provider === "meta") {
+    const apiKey = process.env.META_API_KEY;
+    if (!apiKey) throw new Error("Missing META_API_KEY environment variable");
+    const model = args.model ?? process.env.META_TEXT_MODEL;
+    if (!model) throw new Error("Missing META_TEXT_MODEL environment variable");
+    return chatVia(
+      {
+        provider: "meta",
+        label: "Meta API",
+        url: endpoint(),
+        apiKey,
+        model,
+        maxRetries: MAX_RETRIES,
+      },
+      timeoutMs,
+      buildBody(args, model),
+    );
+  }
+
+  // Baseten first; any failure (including missing config) falls back to one
+  // Meta API attempt with META_TEXT_MODEL.
+  try {
+    const apiKey = process.env.BASETEN_API_KEY;
+    if (!apiKey) throw new Error("Missing BASETEN_API_KEY environment variable");
+    const model = basetenModel(args.model);
+    return await chatVia(
+      {
+        provider: "baseten",
+        label: "Baseten",
+        url: basetenEndpoint(),
+        apiKey,
+        model,
+        maxRetries: MAX_RETRIES,
+      },
+      timeoutMs,
+      buildBody(args, model),
+    );
+  } catch (err) {
+    console.warn(
+      "Baseten call failed, falling back to Meta API:",
+      err instanceof Error ? err.message : err,
+    );
+    const apiKey = process.env.META_API_KEY;
+    if (!apiKey) throw err;
+    const model = process.env.META_TEXT_MODEL;
+    if (!model) throw err;
+    const result = await chatVia(
+      {
+        provider: "meta",
+        label: "Meta API",
+        url: endpoint(),
+        apiKey,
+        model,
+        maxRetries: 0,
+      },
+      timeoutMs,
+      buildBody(args, model),
+    );
+    result.fallback = true;
+    return result;
+  }
+}
+
+function buildBody(
+  args: ChatArgs,
+  model: string,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    messages: args.messages.map(toWireMessage),
+  };
+  if (args.tools?.length) body.tools = args.tools;
+  if (args.temperature !== undefined) body.temperature = args.temperature;
+  if (args.jsonSchema) {
+    body.response_format = {
+      type: "json_schema",
+      json_schema: {
+        name: "response",
+        strict: args.strictJson ?? false,
+        schema: args.jsonSchema,
+      },
+    };
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------------------
@@ -1571,11 +1688,11 @@ export async function segment(args: SegmentArgs): Promise<SegmentResult> {
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429 || res.status >= 500) {
-        lastError = new Error(errorMessage(res.status, await res.text()));
+        lastError = new Error(errorMessage("Meta API", res.status, await res.text()));
         continue;
       }
       if (!res.ok) {
-        throw new Error(errorMessage(res.status, await res.text()));
+        throw new Error(errorMessage("Meta API", res.status, await res.text()));
       }
       const raw = (await res.json()) as {
         model?: string;
@@ -1664,11 +1781,11 @@ export async function generateImage(
         signal: AbortSignal.timeout(timeoutMs),
       });
       if (res.status === 429 || res.status >= 500) {
-        lastError = new Error(errorMessage(res.status, await res.text()));
+        lastError = new Error(errorMessage("Meta API", res.status, await res.text()));
         continue;
       }
       if (!res.ok) {
-        throw new Error(errorMessage(res.status, await res.text()));
+        throw new Error(errorMessage("Meta API", res.status, await res.text()));
       }
       const raw = (await res.json()) as {
         model?: string;

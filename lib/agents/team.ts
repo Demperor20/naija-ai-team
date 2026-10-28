@@ -2,12 +2,17 @@
 // Display names are the plain names owners see (AGENTS.md section 6);
 // never show job titles like CEO or Co-Founder.
 
+import type { ModelProvider } from "../meta";
+
 export interface AgentDef {
   key: string;
   displayName: string;
   channel: string;
   colour: string;
   initials: string;
+  // Which API serves this agent's chat calls: Meta's Model API, or the
+  // Meta open-weight model Muse Spark Open served by Baseten.
+  provider: ModelProvider;
 }
 
 export const AGENTS: AgentDef[] = [
@@ -17,6 +22,7 @@ export const AGENTS: AgentDef[] = [
     channel: "general",
     colour: "#14532d",
     initials: "YT",
+    provider: "meta",
   },
   {
     key: "books",
@@ -24,6 +30,7 @@ export const AGENTS: AgentDef[] = [
     channel: "books",
     colour: "#78350f",
     initials: "BO",
+    provider: "meta",
   },
   {
     key: "product",
@@ -31,6 +38,7 @@ export const AGENTS: AgentDef[] = [
     channel: "product",
     colour: "#0e7490",
     initials: "PL",
+    provider: "baseten",
   },
   {
     key: "marketing",
@@ -38,6 +46,7 @@ export const AGENTS: AgentDef[] = [
     channel: "marketing",
     colour: "#b45309",
     initials: "PR",
+    provider: "meta",
   },
   {
     key: "design",
@@ -45,6 +54,7 @@ export const AGENTS: AgentDef[] = [
     channel: "design",
     colour: "#be123c",
     initials: "FC",
+    provider: "meta",
   },
   {
     key: "engineering",
@@ -52,6 +62,7 @@ export const AGENTS: AgentDef[] = [
     channel: "engineering",
     colour: "#1d4ed8",
     initials: "TC",
+    provider: "meta",
   },
   {
     key: "sales",
@@ -59,6 +70,7 @@ export const AGENTS: AgentDef[] = [
     channel: "sales",
     colour: "#15803d",
     initials: "PC",
+    provider: "baseten",
   },
   {
     key: "compliance",
@@ -66,6 +78,7 @@ export const AGENTS: AgentDef[] = [
     channel: "compliance",
     colour: "#57534e",
     initials: "PA",
+    provider: "meta",
   },
 ];
 

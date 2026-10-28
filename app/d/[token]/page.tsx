@@ -471,6 +471,23 @@ export default async function DashboardPage({
                             ? ` · ${(r.ms / 1000).toFixed(1)}s`
                             : ""}
                         </span>
+                        {r.provider === "baseten" && (
+                          <span
+                            title="Served by the Meta open-weight model Muse Spark Open"
+                            style={{
+                              display: "inline-block",
+                              borderRadius: 999,
+                              background: "#DCFCE7",
+                              color: "#166534",
+                              padding: "1px 10px",
+                              fontSize: 12,
+                              fontWeight: 700,
+                              marginLeft: 8,
+                            }}
+                          >
+                            open weights
+                          </span>
+                        )}
                         {r.detail && (
                           <span style={{ display: "block", marginTop: 2 }}>
                             {r.detail}

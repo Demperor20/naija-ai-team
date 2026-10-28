@@ -16,7 +16,7 @@ Hackathon: Meta Global AI Developer Hackathon, Indie developer track, Build for 
 
 ## 2. Hard rules (never break these)
 
-1. **Every AI call uses a Meta model** through the Meta Model API. No OpenAI, Anthropic or other model providers anywhere, including in dependencies.
+1. **Every AI call uses a Meta model:** through the Meta Model API, or Meta open-weight models served by Baseten. No OpenAI, Anthropic or other model providers anywhere, including in dependencies.
 2. **All Meta API code lives in `lib/meta.ts`.** Nothing else calls `api.meta.ai` directly. Model IDs come from environment variables.
 3. **No secrets in the repo or the browser.** Keys come from `process.env` on the server only. No environment variable in this project uses the `NEXT_PUBLIC_` prefix. Never log keys.
 4. **The approval rule is enforced in code, not just prompts.** Agents can only create proposals with `status = 'pending'`, and nothing in a proposal's `payload` (ledger entries, products, files) takes effect until `applyDecision()` runs after the owner approves. Only the owner's tap (web button or WhatsApp button) changes a status.

@@ -151,6 +151,7 @@ interface StepRecord {
   ms?: number;
   inputTokens?: number;
   outputTokens?: number;
+  provider?: string;
 }
 
 interface LoopResult {
@@ -558,6 +559,7 @@ async function runLoop(args: {
     ctx.ledgerRecent,
   );
   const tools = getToolsFor(agentKey);
+  const provider = getAgent(agentKey).provider;
   const maxRounds =
     agentKey === "ceo" ? CEO_MAX_ROUNDS : SPECIALIST_MAX_ROUNDS;
   const messages: MetaMessage[] = [
@@ -582,6 +584,7 @@ async function runLoop(args: {
       messages,
       tools,
       timeoutMs: CHAT_TIMEOUT_MS,
+      provider,
     });
     lastText = result.text;
     lastModel = result.model;
@@ -591,13 +594,15 @@ async function runLoop(args: {
       model: result.model,
       step: "think",
       detail: short(
-        result.text
-          ? `round ${round}: ${result.text}`
-          : `round ${round}: ${result.toolCalls.length} tool call(s)`,
+        (result.fallback ? "[fell back to Meta API] " : "") +
+          (result.text
+            ? `round ${round}: ${result.text}`
+            : `round ${round}: ${result.toolCalls.length} tool call(s)`),
       ),
       ms: result.ms,
       inputTokens: result.usage?.inputTokens,
       outputTokens: result.usage?.outputTokens,
+      provider: result.provider,
     });
     messages.push({
       role: "assistant",
@@ -643,16 +648,21 @@ async function runLoop(args: {
         jsonSchema: FINAL_JSON_SCHEMA,
         temperature: 0,
         timeoutMs: CHAT_TIMEOUT_MS,
+        provider,
       });
       lastModel = first.model;
       steps.push({
         agentKey,
         model: first.model,
         step: "final",
-        detail: short(first.text || "(empty)"),
+        detail: short(
+          (first.fallback ? "[fell back to Meta API] " : "") +
+            (first.text || "(empty)"),
+        ),
         ms: first.ms,
         inputTokens: first.usage?.inputTokens,
         outputTokens: first.usage?.outputTokens,
+        provider: first.provider,
       });
       const parsed = tryParseFinal(first.text, agentKey);
       if (parsed) {
@@ -672,6 +682,7 @@ async function runLoop(args: {
           jsonSchema: FINAL_JSON_SCHEMA,
           temperature: 0,
           timeoutMs: CHAT_TIMEOUT_MS,
+          provider,
         });
         lastModel = retry.model;
         // Count the retry's tokens on the final step so every call is logged.
@@ -682,6 +693,11 @@ async function runLoop(args: {
               (last.inputTokens ?? 0) + retry.usage.inputTokens;
             last.outputTokens =
               (last.outputTokens ?? 0) + retry.usage.outputTokens;
+            if (retry.fallback && !last.detail?.includes("fell back")) {
+              last.detail = short(
+                `[fell back to Meta API] ${last.detail ?? ""}`,
+              );
+            }
           }
         }
         const reparsed = tryParseFinal(retry.text, agentKey);
@@ -805,6 +821,7 @@ export async function runTeam(input: RunTeamInput): Promise<RunTeamResult> {
       ms: s.ms,
       inputTokens: s.inputTokens,
       outputTokens: s.outputTokens,
+      provider: s.provider,
     });
   }
 
