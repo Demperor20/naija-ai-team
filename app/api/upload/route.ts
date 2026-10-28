@@ -1,7 +1,8 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { getSessionCompanyId } from "@/lib/session";
 import { MediaError, processMedia } from "@/lib/media";
 import { runTeam } from "@/lib/agents/run";
+import { drainCompanyVideoJobs } from "@/lib/video";
 
 export const maxDuration = 300;
 
@@ -66,6 +67,15 @@ export async function POST(request: Request) {
         },
       ],
     });
+    // Queued video renders run after the response (see team route).
+    after(() =>
+      drainCompanyVideoJobs(companyId).catch((err) =>
+        console.error(
+          "upload video drain failed:",
+          err instanceof Error ? err.message : err,
+        ),
+      ),
+    );
     return NextResponse.json({
       ...result,
       media: {

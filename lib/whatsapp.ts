@@ -1,5 +1,5 @@
 // lib/whatsapp.ts — WhatsApp Cloud API (Graph API v26.0) helpers:
-// send text/buttons/image/document, download media, verify signatures.
+// send text/buttons/image/video/document, download media, verify signatures.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -156,6 +156,20 @@ export async function sendImage(
     to,
     type: "image",
     image: { id, ...(caption ? { caption: caption.slice(0, 1024) } : {}) },
+  });
+}
+
+export async function sendVideo(
+  to: string,
+  video: Buffer,
+  mime: string,
+  caption?: string,
+): Promise<void> {
+  const id = await uploadMedia(video, mime, "video.mp4");
+  await postMessage({
+    to,
+    type: "video",
+    video: { id, ...(caption ? { caption: caption.slice(0, 1024) } : {}) },
   });
 }
 

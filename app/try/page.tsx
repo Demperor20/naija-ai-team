@@ -182,8 +182,14 @@ export default function TryPage() {
   const [error, setError] = useState("");
   const [changeFor, setChangeFor] = useState<string | null>(null);
   const [changeNote, setChangeNote] = useState("");
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
   const pollRef = useRef<number | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current !== null) {
@@ -325,19 +331,113 @@ export default function TryPage() {
           createdAt: new Date().toISOString(),
         },
       ]);
-      const fresh = data.decisions as Proposal[];
-      if (fresh?.length) {
-        setProposals((prev) => {
-          const ids = new Set(prev.map((p) => p.decision_id));
-          return [...fresh.filter((p) => !ids.has(p.decision_id)), ...prev];
-        });
-      }
+      mergeProposals(data.decisions as Proposal[]);
     } catch {
       setError("Sorry, something went wrong. Please try again.");
       setDraft(text);
     } finally {
       setSending(false);
     }
+  }
+
+  function mergeProposals(fresh: Proposal[]) {
+    if (!fresh?.length) return;
+    setProposals((prev) => {
+      const ids = new Set(prev.map((p) => p.decision_id));
+      return [...fresh.filter((p) => !ids.has(p.decision_id)), ...prev];
+    });
+  }
+
+  async function uploadFile(file: File, label: string) {
+    if (uploading || sending) return;
+    setUploading(label);
+    setError("");
+    const message = draft.trim();
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("channelId", channel);
+      if (message) form.append("message", message);
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      const data = (await res.json()) as ApiResponse;
+      if (!data.ok) {
+        setError(data.error || "Sorry, something went wrong. Please try again.");
+        return;
+      }
+      const media = data.media as
+        | { transcript?: string | null; kind?: string }
+        | undefined;
+      const ownerMessage =
+        media?.transcript && media.transcript.trim()
+          ? `“${media.transcript.trim()}”`
+          : message || `(Sent a ${media?.kind ?? "file"})`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          agent: data.agentName as string,
+          ownerMessage,
+          reply: data.reply as string,
+          createdAt: new Date().toISOString(),
+        },
+      ]);
+      mergeProposals(data.decisions as Proposal[]);
+      setDraft("");
+    } catch {
+      setError("Sorry, something went wrong. Please try again.");
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  async function startRecording() {
+    if (recording || uploading || sending) return;
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      setError("Voice recording is not supported in this browser.");
+      return;
+    }
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : undefined;
+      const rec = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined,
+      );
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, {
+          type: rec.mimeType || "audio/webm",
+        });
+        if (blob.size > 0) {
+          void uploadFile(
+            new File([blob], "voice-note.webm", { type: blob.type }),
+            "voice note",
+          );
+        }
+      };
+      rec.start();
+      recorderRef.current = rec;
+      setRecording(true);
+    } catch {
+      setError("Could not use the microphone. Please check permission.");
+    }
+  }
+
+  function stopRecording() {
+    const rec = recorderRef.current;
+    recorderRef.current = null;
+    setRecording(false);
+    if (rec && rec.state !== "inactive") rec.stop();
   }
 
   async function pickChannel(channelId: string) {
@@ -619,11 +719,20 @@ export default function TryPage() {
           <div ref={bottomRef} />
         </div>
 
-        {pending.length > 0 && (
+        {(pending.length > 0 || uploading) && (
           <section className="mt-6">
-            <h2 className="font-display text-xl font-semibold text-green-950">
-              Proposals for you ({pending.length})
-            </h2>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-display text-xl font-semibold text-green-950">
+                Proposals for you ({pending.length})
+              </h2>
+              <button
+                type="button"
+                onClick={() => void loadDecisions()}
+                className="shrink-0 rounded-full border border-stone-300 bg-white px-3 py-1 text-sm font-medium text-stone-700"
+              >
+                Refresh
+              </button>
+            </div>
             <div className="mt-3 space-y-3">
               {pending.map((p) => (
                 <div
@@ -634,7 +743,23 @@ export default function TryPage() {
                   <p className="mt-1 text-sm leading-6 text-stone-700">
                     {p.description}
                   </p>
-                  {p.previewUrl ? (
+                  {p.previewUrl && p.kind === "video" ? (
+                    <video
+                      src={p.previewUrl}
+                      controls
+                      preload="metadata"
+                      playsInline
+                      className="mt-2 max-h-105 w-full rounded-lg border border-stone-200 bg-black"
+                    />
+                  ) : p.previewUrl && p.kind === "statement" ? (
+                    <a
+                      href={p.previewUrl}
+                      download
+                      className="mt-2 inline-block rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-green-900 underline"
+                    >
+                      Download the statement (PDF)
+                    </a>
+                  ) : p.previewUrl ? (
                     <img
                       src={p.previewUrl}
                       alt=""
@@ -742,25 +867,91 @@ export default function TryPage() {
           </section>
         )}
 
-        <form
-          onSubmit={send}
-          className="sticky bottom-0 -mx-4 mt-6 flex gap-2 border-t border-stone-200 bg-stone-50 px-4 pb-2 pt-3"
-        >
+        <div className="sticky bottom-0 -mx-4 mt-6 border-t border-stone-200 bg-stone-50 px-4 pb-2 pt-3">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={sending || uploading !== null}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                void startRecording();
+              }}
+              onPointerUp={stopRecording}
+              onPointerLeave={stopRecording}
+              onPointerCancel={stopRecording}
+              onContextMenu={(e) => e.preventDefault()}
+              className={`flex-1 touch-none rounded-lg px-3 py-2 text-sm font-medium select-none ${
+                recording
+                  ? "animate-pulse bg-red-700 text-white"
+                  : "border border-stone-300 bg-white text-stone-700"
+              } disabled:opacity-40`}
+              aria-label="Hold to record a voice note"
+            >
+              {recording ? "Release to send" : "Hold to talk"}
+            </button>
+            <button
+              type="button"
+              disabled={sending || uploading !== null || recording}
+              onClick={() => photoInputRef.current?.click()}
+              className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-medium text-stone-700 disabled:opacity-40"
+            >
+              Photo
+            </button>
+            <button
+              type="button"
+              disabled={sending || uploading !== null || recording}
+              onClick={() => videoInputRef.current?.click()}
+              className="flex-1 rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-700 disabled:opacity-40"
+            >
+              Video
+            </button>
+          </div>
           <input
-            className={inputClass}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Ask ${agentByChannel(channel).displayName}…`}
-            aria-label="Message your team"
+            ref={photoInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            aria-label="Upload a photo"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadFile(file, "photo");
+            }}
           />
-          <button
-            type="submit"
-            disabled={sending || !draft.trim()}
-            className="shrink-0 rounded-lg bg-green-900 px-5 py-2.5 font-medium text-white disabled:opacity-40"
-          >
-            Send
-          </button>
-        </form>
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            className="hidden"
+            aria-label="Upload a video"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) void uploadFile(file, "video");
+            }}
+          />
+          {uploading && (
+            <p className="mt-2 animate-pulse text-sm text-stone-500">
+              Sending {uploading}…
+            </p>
+          )}
+          <form onSubmit={send} className="mt-2 flex gap-2">
+            <input
+              className={inputClass}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder={`Ask ${agentByChannel(channel).displayName}…`}
+              aria-label="Message your team"
+            />
+            <button
+              type="submit"
+              disabled={sending || uploading !== null || !draft.trim()}
+              className="shrink-0 rounded-lg bg-green-900 px-5 py-2.5 font-medium text-white disabled:opacity-40"
+            >
+              Send
+            </button>
+          </form>
+        </div>
       </div>
     </main>
   );

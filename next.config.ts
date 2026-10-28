@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
     "/api/team": ["./prompts/**/*", "./assets/**/*"],
     "/api/start": ["./prompts/**/*"],
     "/api/whatsapp": ["./prompts/**/*", "./assets/**/*"],
-    "/api/upload": ["./prompts/**/*"],
+    "/api/upload": ["./prompts/**/*", "./assets/**/*"],
   },
   turbopack: {
     rules: {

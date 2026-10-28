@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import {
   getRecentMessages,
   listDecisions,
   setDecisionStatus,
   type DecisionStatus,
 } from "@/lib/db";
+import { drainCompanyVideoJobs } from "@/lib/video";
 import { getSessionCompanyId } from "@/lib/session";
 import {
   decisionToDTO,
@@ -70,6 +71,16 @@ export async function POST(request: Request) {
           message: body.message.trim(),
           source: "tryit",
         });
+        // Queued video renders run after the response, so the chat never
+        // waits on them; the finished video arrives as its own proposal.
+        after(() =>
+          drainCompanyVideoJobs(companyId).catch((err) =>
+            console.error(
+              "team video drain failed:",
+              err instanceof Error ? err.message : err,
+            ),
+          ),
+        );
         return NextResponse.json(result);
       }
       case "history": {

@@ -12,6 +12,7 @@ import {
   getLedgerDaily,
   getWhoOwesMe,
   listApprovedProducts,
+  listConfirmedLedgerEntriesInRange,
   saveFile,
 } from "../db";
 import {
@@ -22,6 +23,14 @@ import {
   resizeForSegment,
   type BrandColours,
 } from "../images";
+import { createMediaJob } from "../db";
+import { validateVideoJobInput } from "../video";
+import {
+  buildStatementPdf,
+  monthRange,
+  statementMonthLabel,
+  validateStatementMonth,
+} from "../statement";
 import { SPECIALIST_KEYS } from "./team";
 
 export const WEB_SEARCH_TOOL: MetaTool = {
@@ -112,7 +121,12 @@ export function getToolsFor(agentKey: string): MetaTool[] {
     return [WEB_SEARCH_TOOL, ...SPECIALIST_KEYS.map(delegateToolFor)];
   }
   if (agentKey === "books") {
-    return [WEB_SEARCH_TOOL, BOOKS_SUMMARY_TOOL, WHO_OWES_ME_TOOL];
+    return [
+      WEB_SEARCH_TOOL,
+      BOOKS_SUMMARY_TOOL,
+      WHO_OWES_ME_TOOL,
+      MAKE_STATEMENT_TOOL,
+    ];
   }
   if (agentKey === "design") {
     return [
@@ -121,6 +135,9 @@ export function getToolsFor(agentKey: string): MetaTool[] {
       MAKE_CATALOGUE_TOOL,
       MAKE_FLYER_TOOL,
     ];
+  }
+  if (agentKey === "marketing") {
+    return [WEB_SEARCH_TOOL, MAKE_VIDEO_TOOL];
   }
   return [WEB_SEARCH_TOOL];
 }
@@ -485,6 +502,201 @@ export async function handleMakeFlyer(
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     return { error: `make_flyer failed: ${detail}` };
+  }
+}
+
+export const MAKE_VIDEO_TOOL: MetaTool = {
+  type: "function",
+  function: {
+    name: "make_video",
+    description:
+      "Start a promo video job from the owner's shop video: it cuts your 3 to 5 best moments (15 to 30 seconds total), burns in your captions, and adds an end card. The render runs in the background and the finished video arrives as its own proposal later — after calling this tool, tell the owner: Your video is cooking, I'll send it in a few minutes. Do not make a video proposal yourself.",
+    parameters: {
+      type: "object",
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The file_id of the owner's video.",
+        },
+        moments: {
+          type: "array",
+          description:
+            "3 to 5 best moments from the highlight list, 15 to 30 seconds total.",
+          items: {
+            type: "object",
+            properties: {
+              start: {
+                type: "number",
+                description: "Start time in seconds.",
+              },
+              end: { type: "number", description: "End time in seconds." },
+              caption: {
+                type: "string",
+                description:
+                  "Caption burned on screen, 5 words or fewer. Only words and prices the owner gave or approved.",
+              },
+            },
+            required: ["start", "end", "caption"],
+          },
+        },
+        opening: {
+          type: "string",
+          description:
+            "Opening line shown over the first seconds, e.g. 'Fresh zobo in Yaba!'.",
+        },
+      },
+      required: ["file_id", "moments", "opening"],
+    },
+  },
+};
+
+export interface MakeVideoResult {
+  job_id: string;
+  status: "queued";
+  segments: number;
+  footage_sec: number;
+  tell_owner: string;
+}
+
+export async function handleMakeVideo(
+  companyId: string,
+  args: Record<string, unknown>,
+  channelId: string,
+  source: "tryit" | "whatsapp",
+): Promise<MakeVideoResult | { error: string }> {
+  try {
+    const input = validateVideoJobInput({
+      ...args,
+      source,
+      channel_id: channelId,
+    });
+    const file = await getFile(input.fileId);
+    if (!file || file.company_id !== companyId) {
+      return { error: "That video was not found." };
+    }
+    if (file.kind !== "video") {
+      return { error: "That file is not a video." };
+    }
+    const job = await createMediaJob({
+      companyId,
+      kind: "marketing_video",
+      jobInput: input,
+    });
+    const footage = input.moments.reduce((acc, m) => acc + (m.end - m.start), 0);
+    return {
+      job_id: job.id,
+      status: "queued",
+      segments: input.moments.length,
+      footage_sec: Math.round(footage),
+      tell_owner: "Your video is cooking, I'll send it in a few minutes.",
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: detail };
+  }
+}
+
+export const MAKE_STATEMENT_TOOL: MetaTool = {
+  type: "function",
+  function: {
+    name: "make_statement",
+    description:
+      "Build the monthly statement PDF from CONFIRMED entries: totals, week-by-week sales, top items, money owed and every entry. Use when the owner asks for their statement. Then propose it (kind statement with payload.file_id) so the owner approves it before sharing.",
+    parameters: {
+      type: "object",
+      properties: {
+        month: {
+          type: "string",
+          description:
+            'The month as YYYY-MM, e.g. "2026-10". Use the current month unless the owner names another.',
+        },
+      },
+      required: ["month"],
+    },
+  },
+};
+
+export interface MakeStatementResult {
+  statement_file_id: string;
+  url: string;
+  month: string;
+  entries: number;
+  sales: number;
+  costs: number;
+  profit: number;
+}
+
+export async function handleMakeStatement(
+  companyId: string,
+  args: { month?: unknown },
+): Promise<MakeStatementResult | { error: string }> {
+  try {
+    const month = validateStatementMonth(args.month);
+    const company = await getCompany(companyId);
+    if (!company) return { error: "Company not found." };
+    const { start, end } = monthRange(month);
+    const [rows, owedRows] = await Promise.all([
+      listConfirmedLedgerEntriesInRange(companyId, start, end),
+      getWhoOwesMe(companyId, 50),
+    ]);
+    if (rows.length === 0) {
+      return {
+        error: `No confirmed entries for ${statementMonthLabel(month)}. Record and approve sales first.`,
+      };
+    }
+    const pdf = await buildStatementPdf({
+      businessName: company.name,
+      ownerName: company.owner_name,
+      month,
+      entries: rows.map((r) => ({
+        entryDate: r.entry_date,
+        kind: r.kind,
+        item: r.item,
+        quantity: r.quantity !== null ? Number(r.quantity) : null,
+        unitPrice: r.unit_price !== null ? Number(r.unit_price) : null,
+        amount: Number(r.amount) || 0,
+        counterparty: r.counterparty,
+        paymentMethod: r.payment_method,
+        sourceFileId: r.source_file_id,
+      })),
+      owed: owedRows.map((r) => ({
+        counterparty: r.counterparty,
+        balance: Number(r.balance) || 0,
+      })),
+    });
+    const path = `${companyId}/${dayStamp()}/${randomUUID()}-statement-${month}.pdf`;
+    const { error } = await getClient()
+      .storage.from("files")
+      .upload(path, pdf, { contentType: "application/pdf", upsert: false });
+    if (error) return { error: `statement upload failed: ${error.message}` };
+    const url = getClient().storage.from("files").getPublicUrl(path).data
+      .publicUrl;
+    const file = await saveFile({
+      companyId,
+      kind: "statement",
+      url,
+      mime: "application/pdf",
+      madeBy: "team",
+      meta: { size: pdf.length, month, entries: rows.length },
+    });
+    let sales = 0;
+    let costs = 0;
+    for (const r of rows) {
+      if (r.kind === "sale") sales += Number(r.amount) || 0;
+      else if (r.kind === "expense") costs += Number(r.amount) || 0;
+    }
+    return {
+      statement_file_id: file.id,
+      url,
+      month,
+      entries: rows.length,
+      sales,
+      costs,
+      profit: sales - costs,
+    };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    return { error: detail };
   }
 }
 

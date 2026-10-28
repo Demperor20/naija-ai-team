@@ -17,8 +17,10 @@ import {
   sendImage,
   sendProposalButtons,
   sendText,
+  sendVideo,
   verifySignature,
 } from "@/lib/whatsapp";
+import { drainCompanyVideoJobs } from "@/lib/video";
 import { MediaError, processMedia } from "@/lib/media";
 
 export const maxDuration = 300;
@@ -191,6 +193,19 @@ async function sendReplyWithProposals(
   }
 }
 
+// Video renders run after the reply is sent: the owner already got "your
+// video is cooking" and the finished proposal arrives as its own message.
+async function drainVideos(companyId: string): Promise<void> {
+  try {
+    await drainCompanyVideoJobs(companyId);
+  } catch (err) {
+    console.error(
+      "whatsapp video drain failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 async function handleMedia(phone: string, media: WaMedia): Promise<void> {
   const user = await getWhatsappUser(phone);
   if (!user || !user.company_id) {
@@ -280,6 +295,7 @@ async function handleMedia(phone: string, media: WaMedia): Promise<void> {
     ],
   });
   await sendReplyWithProposals(phone, result.reply, result.decisions);
+  await drainVideos(user.company_id);
 }
 
 async function handleText(phone: string, body: string): Promise<void> {
@@ -311,6 +327,7 @@ async function handleText(phone: string, body: string): Promise<void> {
       source: "whatsapp",
     });
     await sendReplyWithProposals(phone, result.reply, result.decisions);
+    await drainVideos(user.company_id);
     return;
   }
   await trySend(phone, "ack", () =>
@@ -323,6 +340,7 @@ async function handleText(phone: string, body: string): Promise<void> {
     source: "whatsapp",
   });
   await sendReplyWithProposals(phone, result.reply, result.decisions);
+  await drainVideos(user.company_id);
 }
 
 async function handleButton(phone: string, buttonId: string): Promise<void> {
@@ -368,23 +386,26 @@ async function handleButton(phone: string, buttonId: string): Promise<void> {
   if (status === "approved") {
     try {
       const result = await applyDecision(user.company_id, decisionId);
-      // File proposals (catalogue, later flyer/video/statement): send the
+      // File proposals (catalogue, flyer, video, later statement): send the
       // approved file ready to forward or post.
       if (result.fileId) {
         const file = await getFile(result.fileId);
         if (file && file.company_id === user.company_id) {
           const res = await fetch(file.url, {
-            signal: AbortSignal.timeout(30_000),
+            signal: AbortSignal.timeout(60_000),
           });
           if (res.ok) {
             const bytes = Buffer.from(await res.arrayBuffer());
+            const caption = `${decision.title} — ready to forward or post.`;
             await trySend(phone, "approved-file", () =>
-              sendImage(
-                phone,
-                bytes,
-                file.mime ?? "image/png",
-                `${decision.title} — ready to forward or post.`,
-              ),
+              file.kind === "marketing_video"
+                ? sendVideo(phone, bytes, file.mime ?? "video/mp4", caption)
+                : sendImage(
+                    phone,
+                    bytes,
+                    file.mime ?? "image/png",
+                    caption,
+                  ),
             );
           }
         }

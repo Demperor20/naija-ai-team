@@ -27,7 +27,7 @@ export interface ApplyResult {
   applied: boolean;
   kind: string;
   inserted?: number;
-  // For file kinds (catalogue, later flyer/video/statement): the approved
+  // For file kinds (catalogue, flyer, video, statement): the approved
   // file, so callers can send it to the owner.
   fileId?: string;
 }
@@ -315,7 +315,9 @@ export async function applyDecision(
       break;
     }
     case "catalogue":
-    case "flyer": {
+    case "flyer":
+    case "video":
+    case "statement": {
       const payload = decision.payload as Record<string, unknown> | null;
       const id =
         typeof payload?.file_id === "string" ? payload.file_id : "";
@@ -325,10 +327,6 @@ export async function applyDecision(
       fileId = id;
       break;
     }
-    // TODO (Day 6) — kind "video": same file-approval as catalogue; on
-    // WhatsApp, send the file to the owner ready to forward or post.
-    // TODO (Day 7) — kind "statement": same file-approval as catalogue for
-    // the statement PDF.
     default:
       console.warn(
         `applyDecision: kind not implemented yet: ${kind}; leaving decision ${decisionId} unapplied`,

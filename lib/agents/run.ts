@@ -33,6 +33,8 @@ import {
   handleMakeCatalogue,
   handleMakeCutout,
   handleMakeFlyer,
+  handleMakeStatement,
+  handleMakeVideo,
   handleWebSearch,
   handleWhoOwesMe,
 } from "./tools";
@@ -161,6 +163,7 @@ interface LoopContext {
   approved: Decision[];
   deadline: number;
   source: "tryit" | "whatsapp";
+  channelId: string;
   today: string;
   ledgerRecent?: LedgerEntryRow[];
 }
@@ -385,14 +388,26 @@ async function executeTool(
     }
   }
 
-  if (call.name === "books_summary" || call.name === "who_owes_me") {
+  if (
+    call.name === "books_summary" ||
+    call.name === "who_owes_me" ||
+    call.name === "make_statement"
+  ) {
     const args = parseToolArgs(call.arguments);
     if (!args) return fail(`could not parse ${call.name} arguments as JSON.`);
     try {
       const result =
         call.name === "books_summary"
           ? await handleBooksSummary(ctx.company.id, args)
-          : await handleWhoOwesMe(ctx.company.id);
+          : call.name === "who_owes_me"
+            ? await handleWhoOwesMe(ctx.company.id)
+            : await handleMakeStatement(ctx.company.id, args);
+      const detail =
+        call.name === "books_summary"
+          ? `books_summary(${(args.period as string) ?? "week"})`
+          : call.name === "who_owes_me"
+            ? "who_owes_me()"
+            : `make_statement(${(args.month as string) ?? "?"})`;
       return {
         text: short(JSON.stringify(result), 4000),
         steps: [
@@ -400,11 +415,7 @@ async function executeTool(
             agentKey: parentAgentKey,
             model: parentModel,
             step: "tool",
-            detail: short(
-              call.name === "books_summary"
-                ? `books_summary(${(args.period as string) ?? "week"})`
-                : "who_owes_me()",
-            ),
+            detail: short(detail),
             ms: Date.now() - started,
           },
         ],
@@ -418,7 +429,8 @@ async function executeTool(
   if (
     call.name === "make_cutout" ||
     call.name === "make_catalogue" ||
-    call.name === "make_flyer"
+    call.name === "make_flyer" ||
+    call.name === "make_video"
   ) {
     const args = parseToolArgs(call.arguments);
     if (!args) return fail(`could not parse ${call.name} arguments as JSON.`);
@@ -428,13 +440,22 @@ async function executeTool(
           ? await handleMakeCutout(ctx.company.id, args)
           : call.name === "make_catalogue"
             ? await handleMakeCatalogue(ctx.company.id)
-            : await handleMakeFlyer(ctx.company.id, args);
+            : call.name === "make_flyer"
+              ? await handleMakeFlyer(ctx.company.id, args)
+              : await handleMakeVideo(
+                  ctx.company.id,
+                  args,
+                  ctx.channelId,
+                  ctx.source,
+                );
       const detail =
         call.name === "make_cutout"
           ? `make_cutout(${(args.product_name as string) ?? "?"})`
           : call.name === "make_catalogue"
             ? "make_catalogue()"
-            : `make_flyer(${(args.headline as string) ?? "?"})`;
+            : call.name === "make_flyer"
+              ? `make_flyer(${(args.headline as string) ?? "?"})`
+              : `make_video(${Array.isArray(args.moments) ? args.moments.length : "?"} moments)`;
       return {
         text: short(JSON.stringify(result), 4000),
         steps: [
@@ -711,6 +732,7 @@ export async function runTeam(input: RunTeamInput): Promise<RunTeamResult> {
     approved,
     deadline,
     source: input.source,
+    channelId: input.channelId,
     today,
     ledgerRecent,
   };

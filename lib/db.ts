@@ -25,6 +25,16 @@ function fail(op: string, err: { message: string }): never {
   throw new Error(`db.${op} failed: ${err.message}`);
 }
 
+// IDs and tokens from URLs and buttons must be UUIDs before they touch a
+// UUID column, or PostgREST throws instead of returning no rows.
+export function isUuid(value: string): boolean {
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
 // --- Row types (snake_case matches supabase/schema.sql) ---
 
 export interface Company {
@@ -195,6 +205,11 @@ export async function getCompany(companyId: string): Promise<Company | null> {
 export async function getCompanyByToken(
   token: string,
 ): Promise<Company | null> {
+  // Dashboard tokens come from URLs owners type or paste; a malformed
+  // token is "not found", not a database error (access_token is UUID).
+  if (!isUuid(token)) {
+    return null;
+  }
   const { data, error } = await getClient()
     .from("companies")
     .select()
@@ -210,6 +225,21 @@ export async function deleteCompany(companyId: string): Promise<void> {
     .delete()
     .eq("id", companyId);
   if (error) fail("deleteCompany", error);
+}
+
+// Latest messages across all channels, newest first (for the dashboard).
+export async function listCompanyMessages(
+  companyId: string,
+  limit: number,
+): Promise<Message[]> {
+  const { data, error } = await getClient()
+    .from("messages")
+    .select()
+    .eq("company_id", companyId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) fail("listCompanyMessages", error);
+  return (data ?? []) as Message[];
 }
 
 // --- Messages ---
@@ -569,6 +599,24 @@ export async function listConfirmedLedgerEntries(
   return (data ?? []) as LedgerEntryRow[];
 }
 
+export async function listConfirmedLedgerEntriesInRange(
+  companyId: string,
+  startDay: string,
+  endDay: string,
+): Promise<LedgerEntryRow[]> {
+  const { data, error } = await getClient()
+    .from("ledger_entries")
+    .select()
+    .eq("company_id", companyId)
+    .eq("status", "confirmed")
+    .gte("entry_date", startDay)
+    .lte("entry_date", endDay)
+    .order("entry_date", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (error) fail("listConfirmedLedgerEntriesInRange", error);
+  return (data ?? []) as LedgerEntryRow[];
+}
+
 export interface NewLedgerEntry {
   decisionId: string;
   messageId: string | null;
@@ -747,6 +795,122 @@ export async function listApprovedProducts(
     .order("created_at", { ascending: true });
   if (error) fail("listApprovedProducts", error);
   return (data ?? []) as ProductRow[];
+}
+
+// --- Media jobs (long tasks: video, catalogue, statement) ---
+
+export type MediaJobStatus = "queued" | "running" | "done" | "failed";
+
+export interface MediaJob {
+  id: string;
+  company_id: string;
+  kind: string;
+  status: MediaJobStatus;
+  input: unknown;
+  output: unknown;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function createMediaJob(input: {
+  companyId: string;
+  kind: string;
+  jobInput?: unknown;
+}): Promise<MediaJob> {
+  const { data, error } = await getClient()
+    .from("media_jobs")
+    .insert({
+      company_id: input.companyId,
+      kind: input.kind,
+      status: "queued",
+      input: input.jobInput ?? {},
+    })
+    .select()
+    .single();
+  if (error) fail("createMediaJob", error);
+  return data as MediaJob;
+}
+
+export async function getMediaJob(jobId: string): Promise<MediaJob | null> {
+  const { data, error } = await getClient()
+    .from("media_jobs")
+    .select()
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error) fail("getMediaJob", error);
+  return data as MediaJob | null;
+}
+
+// Oldest queued job of a kind for this company. Runners claim with
+// claimMediaJob before doing any work.
+export async function listQueuedMediaJobs(
+  companyId: string,
+  kind: string,
+): Promise<MediaJob[]> {
+  const { data, error } = await getClient()
+    .from("media_jobs")
+    .select()
+    .eq("company_id", companyId)
+    .eq("kind", kind)
+    .eq("status", "queued")
+    .order("created_at", { ascending: true });
+  if (error) fail("listQueuedMediaJobs", error);
+  return (data ?? []) as MediaJob[];
+}
+
+// Atomically moves a queued job to running. Only the caller whose update
+// finds the job still queued wins (returns true); everyone else skips it.
+export async function claimMediaJob(
+  companyId: string,
+  jobId: string,
+): Promise<boolean> {
+  const { data, error } = await getClient()
+    .from("media_jobs")
+    .update({
+      status: "running",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("company_id", companyId)
+    .eq("status", "queued")
+    .select("id");
+  if (error) fail("claimMediaJob", error);
+  return (data?.length ?? 0) > 0;
+}
+
+export async function setMediaJobDone(
+  companyId: string,
+  jobId: string,
+  output: unknown,
+): Promise<void> {
+  const { error } = await getClient()
+    .from("media_jobs")
+    .update({
+      status: "done",
+      output: output ?? {},
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("company_id", companyId);
+  if (error) fail("setMediaJobDone", error);
+}
+
+export async function setMediaJobFailed(
+  companyId: string,
+  jobId: string,
+  message: string,
+): Promise<void> {
+  const { error } = await getClient()
+    .from("media_jobs")
+    .update({
+      status: "failed",
+      error: message.slice(0, 1000),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", jobId)
+    .eq("company_id", companyId);
+  if (error) fail("setMediaJobFailed", error);
 }
 
 // --- File approval ---
