@@ -13,6 +13,10 @@ import {
   withPreviewUrls,
 } from "@/lib/agents/run";
 import { applyDecision } from "@/lib/decisions";
+import {
+  checkCompanyRateLimit,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -63,6 +67,12 @@ export async function POST(request: Request) {
           return NextResponse.json(
             { ok: false, error: "Please write a message first." },
             { status: 400 },
+          );
+        }
+        if (!(await checkCompanyRateLimit(companyId)).allowed) {
+          return NextResponse.json(
+            { ok: false, error: RATE_LIMIT_MESSAGE },
+            { status: 429 },
           );
         }
         const result = await runTeam({

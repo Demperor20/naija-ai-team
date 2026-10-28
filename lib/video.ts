@@ -26,6 +26,7 @@ import {
   listQueuedMediaJobs,
   saveDecisions,
   saveFile,
+  saveMessage,
   setMediaJobDone,
   setMediaJobFailed,
 } from "./db";
@@ -599,17 +600,36 @@ export async function runMarketingVideoJob(
 
   let phone: string | null = null;
   let source: "tryit" | "whatsapp" = "tryit";
+  let channelId = "marketing";
   const fail = async (message: string): Promise<RunJobResult> => {
     await setMediaJobFailed(companyId, jobId, message);
+    const note =
+      "Sorry, your video didn't work out. Please send the clip again, or a shorter one, and I'll try again.";
     if (source === "whatsapp" && phone) {
       try {
-        await sendText(
-          phone,
-          "Sorry, your video didn't work out. Please send the clip again, or a shorter one, and I'll try again.",
-        );
+        await sendText(phone, note);
       } catch (err) {
         console.error(
           `video job ${jobId} failure notice failed:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    } else if (source === "tryit") {
+      // No push channel on web: leave the note in the chat history so the
+      // owner sees it next time they open the channel.
+      try {
+        await saveMessage({
+          companyId,
+          channelId,
+          agentKey: "marketing",
+          agentName: "Promotion",
+          ownerMessage: "",
+          reply: note,
+          source: "tryit",
+        });
+      } catch (err) {
+        console.error(
+          `video job ${jobId} failure note failed:`,
           err instanceof Error ? err.message : err,
         );
       }
@@ -620,6 +640,7 @@ export async function runMarketingVideoJob(
   try {
     const input = validateVideoJobInput(job.input);
     source = input.source;
+    channelId = input.channelId;
     const company = await getCompany(companyId);
     if (!company) throw new Error("Company not found.");
     phone = company.whatsapp_phone;

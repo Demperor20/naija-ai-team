@@ -100,6 +100,8 @@ export interface AgentRun {
   step: string;
   detail: string | null;
   ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
   created_at: string;
 }
 
@@ -427,24 +429,102 @@ export interface NewAgentRun {
   step: string;
   detail?: string;
   ms?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
+let warnedMissingTokenColumns = false;
+
 export async function saveAgentRun(input: NewAgentRun): Promise<AgentRun> {
+  const row: Record<string, unknown> = {
+    company_id: input.companyId,
+    message_id: input.messageId ?? null,
+    agent_key: input.agentKey,
+    model: input.model,
+    step: input.step,
+    detail: input.detail ?? null,
+    ms: input.ms ?? null,
+  };
+  if (input.inputTokens !== undefined) row.input_tokens = input.inputTokens;
+  if (input.outputTokens !== undefined) row.output_tokens = input.outputTokens;
+  const first = await getClient().from("agent_runs").insert(row).select().single();
+  if (!first.error) return first.data as AgentRun;
+  // Transitional fallback: schema-v4.sql (token columns) not run yet.
+  // Anything else is a real failure and still throws.
+  if (
+    (input.inputTokens !== undefined || input.outputTokens !== undefined) &&
+    /input_tokens|output_tokens/.test(first.error.message)
+  ) {
+    if (!warnedMissingTokenColumns) {
+      warnedMissingTokenColumns = true;
+      console.warn(
+        "db.saveAgentRun: token columns missing, run supabase/schema-v4.sql; saving without tokens",
+      );
+    }
+    delete row.input_tokens;
+    delete row.output_tokens;
+    const second = await getClient().from("agent_runs").insert(row).select().single();
+    if (!second.error) return second.data as AgentRun;
+  }
+  fail("saveAgentRun", first.error);
+}
+
+// Model + token counts per agent step, for the cost report.
+export async function listAgentRunUsage(
+  companyId: string,
+): Promise<Array<{ model: string; step: string; inputTokens: number | null; outputTokens: number | null }>> {
   const { data, error } = await getClient()
     .from("agent_runs")
-    .insert({
-      company_id: input.companyId,
-      message_id: input.messageId ?? null,
-      agent_key: input.agentKey,
-      model: input.model,
-      step: input.step,
-      detail: input.detail ?? null,
-      ms: input.ms ?? null,
-    })
+    .select("model, step, input_tokens, output_tokens")
+    .eq("company_id", companyId);
+  if (error) {
+    // Transitional fallback, as in saveAgentRun.
+    if (/input_tokens|output_tokens/.test(error.message)) {
+      const retry = await getClient()
+        .from("agent_runs")
+        .select("model, step")
+        .eq("company_id", companyId);
+      if (retry.error) fail("listAgentRunUsage", retry.error);
+      return ((retry.data ?? []) as Array<{ model: string; step: string }>).map(
+        (r) => ({ model: r.model, step: r.step, inputTokens: null, outputTokens: null }),
+      );
+    }
+    fail("listAgentRunUsage", error);
+  }
+  return ((data ?? []) as Array<{
+    model: string;
+    step: string;
+    input_tokens: number | null;
+    output_tokens: number | null;
+  }>).map((r) => ({
+    model: r.model,
+    step: r.step,
+    inputTokens: r.input_tokens,
+    outputTokens: r.output_tokens,
+  }));
+}
+
+// Messages in the trailing window, for rate limiting (count only).
+export async function countRecentMessages(
+  companyId: string,
+  sinceIso: string,
+): Promise<number> {
+  const { count, error } = await getClient()
+    .from("messages")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", companyId)
+    .gte("created_at", sinceIso);
+  if (error) fail("countRecentMessages", error);
+  return count ?? 0;
+}
+
+export async function listCompanies(): Promise<Company[]> {
+  const { data, error } = await getClient()
+    .from("companies")
     .select()
-    .single();
-  if (error) fail("saveAgentRun", error);
-  return data as AgentRun;
+    .order("created_at", { ascending: true });
+  if (error) fail("listCompanies", error);
+  return (data ?? []) as Company[];
 }
 
 export async function listAgentRunsByMessage(

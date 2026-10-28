@@ -149,6 +149,8 @@ interface StepRecord {
   step: string;
   detail?: string;
   ms?: number;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 interface LoopResult {
@@ -594,6 +596,8 @@ async function runLoop(args: {
           : `round ${round}: ${result.toolCalls.length} tool call(s)`,
       ),
       ms: result.ms,
+      inputTokens: result.usage?.inputTokens,
+      outputTokens: result.usage?.outputTokens,
     });
     messages.push({
       role: "assistant",
@@ -647,6 +651,8 @@ async function runLoop(args: {
         step: "final",
         detail: short(first.text || "(empty)"),
         ms: first.ms,
+        inputTokens: first.usage?.inputTokens,
+        outputTokens: first.usage?.outputTokens,
       });
       const parsed = tryParseFinal(first.text, agentKey);
       if (parsed) {
@@ -668,6 +674,16 @@ async function runLoop(args: {
           timeoutMs: CHAT_TIMEOUT_MS,
         });
         lastModel = retry.model;
+        // Count the retry's tokens on the final step so every call is logged.
+        if (retry.usage) {
+          const last = steps[steps.length - 1];
+          if (last && last.step === "final") {
+            last.inputTokens =
+              (last.inputTokens ?? 0) + retry.usage.inputTokens;
+            last.outputTokens =
+              (last.outputTokens ?? 0) + retry.usage.outputTokens;
+          }
+        }
         const reparsed = tryParseFinal(retry.text, agentKey);
         if (reparsed) {
           const gated = gateLedgerProposals(reparsed.reply, reparsed.decisions);
@@ -787,6 +803,8 @@ export async function runTeam(input: RunTeamInput): Promise<RunTeamResult> {
       step: s.step,
       detail: s.detail,
       ms: s.ms,
+      inputTokens: s.inputTokens,
+      outputTokens: s.outputTokens,
     });
   }
 

@@ -32,12 +32,19 @@ export interface MetaTool {
   };
 }
 
+export interface ChatUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export interface ChatResult {
   text: string;
   toolCalls: MetaToolCallRequest[];
   raw: unknown;
   model: string;
   ms: number;
+  // Token counts when the API returns them (null for models that don't).
+  usage: ChatUsage | null;
 }
 
 export interface ChatArgs {
@@ -56,7 +63,8 @@ export interface ChatArgs {
 }
 
 const DEFAULT_TIMEOUT_MS = 90_000;
-const MAX_RETRIES = 2;
+// Every Meta API call: one attempt plus exactly one retry.
+const MAX_RETRIES = 1;
 
 function endpoint(): string {
   const base = process.env.META_API_BASE;
@@ -82,6 +90,26 @@ function toWireMessage(m: MetaMessage): Record<string, unknown> {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Token counts from a chat response, accepting OpenAI-style
+// (prompt/completion_tokens) and short (input/output_tokens) shapes.
+function parseUsage(
+  usage: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    input_tokens?: unknown;
+    output_tokens?: unknown;
+  } | undefined,
+): ChatUsage | null {
+  if (!usage) return null;
+  const num = (v: unknown): number | null =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+  const input = num(usage.prompt_tokens) ?? num(usage.input_tokens);
+  const output =
+    num(usage.completion_tokens) ?? num(usage.output_tokens);
+  if (input === null && output === null) return null;
+  return { inputTokens: input ?? 0, outputTokens: output ?? 0 };
 }
 
 function errorMessage(status: number, bodyText: string): string {
@@ -147,6 +175,12 @@ export async function chat(args: ChatArgs): Promise<ChatResult> {
       }
       const raw = (await res.json()) as {
         model?: string;
+        usage?: {
+          prompt_tokens?: unknown;
+          completion_tokens?: unknown;
+          input_tokens?: unknown;
+          output_tokens?: unknown;
+        };
         choices?: Array<{
           message?: {
             content?: string | Array<{ type?: string; text?: string }> | null;
@@ -175,6 +209,7 @@ export async function chat(args: ChatArgs): Promise<ChatResult> {
         name: c.function?.name ?? "",
         arguments: c.function?.arguments ?? "",
       }));
+      const usage = parseUsage(raw.usage);
       return {
         text,
         toolCalls,
@@ -182,6 +217,7 @@ export async function chat(args: ChatArgs): Promise<ChatResult> {
         model:
           typeof raw.model === "string" && raw.model ? raw.model : model,
         ms: Date.now() - started,
+        usage,
       };
     } catch (err) {
       // Retry network errors and timeouts; rethrow API errors immediately.

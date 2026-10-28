@@ -3,6 +3,10 @@ import { getSessionCompanyId } from "@/lib/session";
 import { MediaError, processMedia } from "@/lib/media";
 import { runTeam } from "@/lib/agents/run";
 import { drainCompanyVideoJobs } from "@/lib/video";
+import {
+  checkCompanyRateLimit,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -42,6 +46,12 @@ export async function POST(request: Request) {
   const rawMessage = form.get("message");
   const message = typeof rawMessage === "string" ? rawMessage.trim() : "";
 
+  if (!(await checkCompanyRateLimit(companyId)).allowed) {
+    return NextResponse.json(
+      { ok: false, error: RATE_LIMIT_MESSAGE },
+      { status: 429 },
+    );
+  }
   try {
     const buffer = Buffer.from(await file.arrayBuffer());
     const mime = file.type || "application/octet-stream";

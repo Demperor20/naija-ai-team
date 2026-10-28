@@ -22,6 +22,11 @@ import {
 } from "@/lib/whatsapp";
 import { drainCompanyVideoJobs } from "@/lib/video";
 import { MediaError, processMedia } from "@/lib/media";
+import {
+  checkCompanyRateLimit,
+  checkPhoneRateLimit,
+  RATE_LIMIT_MESSAGE,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 300;
 
@@ -209,6 +214,12 @@ async function drainVideos(companyId: string): Promise<void> {
 async function handleMedia(phone: string, media: WaMedia): Promise<void> {
   const user = await getWhatsappUser(phone);
   if (!user || !user.company_id) {
+    if (!checkPhoneRateLimit(phone).allowed) {
+      await trySend(phone, "rate-limit", () =>
+        sendText(phone, RATE_LIMIT_MESSAGE),
+      );
+      return;
+    }
     const step = user?.onboarding_step ?? "start";
     if (step === "start") {
       await upsertWhatsappUser({
@@ -230,6 +241,12 @@ async function handleMedia(phone: string, media: WaMedia): Promise<void> {
         ),
       );
     }
+    return;
+  }
+  if (!(await checkCompanyRateLimit(user.company_id)).allowed) {
+    await trySend(phone, "rate-limit", () =>
+      sendText(phone, RATE_LIMIT_MESSAGE),
+    );
     return;
   }
   let downloaded;
@@ -301,7 +318,19 @@ async function handleMedia(phone: string, media: WaMedia): Promise<void> {
 async function handleText(phone: string, body: string): Promise<void> {
   const user = await getWhatsappUser(phone);
   if (!user || !user.company_id) {
+    if (!checkPhoneRateLimit(phone).allowed) {
+      await trySend(phone, "rate-limit", () =>
+        sendText(phone, RATE_LIMIT_MESSAGE),
+      );
+      return;
+    }
     await handleOnboarding(phone, user, body);
+    return;
+  }
+  if (!(await checkCompanyRateLimit(user.company_id)).allowed) {
+    await trySend(phone, "rate-limit", () =>
+      sendText(phone, RATE_LIMIT_MESSAGE),
+    );
     return;
   }
   if (user.awaiting_note_for) {

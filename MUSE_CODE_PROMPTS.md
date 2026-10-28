@@ -195,6 +195,22 @@ Hardening pass across the whole app, without changing features: (1) Treat all te
 
 ---
 
+## Prompt 15: Twilio WhatsApp Sandbox
+
+Add Twilio's WhatsApp Sandbox as a second WhatsApp provider, chosen by WHATSAPP_PROVIDER=meta|twilio, without changing any agent code.
+
+1. Refactor lib/whatsapp.ts into lib/whatsapp/ with a common interface and two providers (meta.ts = the existing Cloud API code, twilio.ts = new). Interface: parseIncoming(request) → normalized messages { from (digits only, e.g. 2348031234567), messageId, type: text|audio|image|video|reply, text, media?: { fetch(): Promise<{buffer, mime}> } }; sendText(to, text); sendMedia(to, publicUrl, caption?); sendProposals(to, decisions). Move the shared logic from app/api/whatsapp/route.ts (onboarding, runTeam, decisions, duplicates via whatsapp_seen, dry-run) into lib/whatsapp/handle.ts so both providers use exactly the same flow.
+
+2. Create app/api/twilio/route.ts for Twilio's "When a message comes in" webhook: it receives application/x-www-form-urlencoded fields (From like "whatsapp:+234…", Body, NumMedia, MediaUrl0…, MediaContentType0…, MessageSid, ProfileName). Validate X-Twilio-Signature with TWILIO_AUTH_TOKEN using the official twilio npm package (validateRequest), using the exact public https URL Twilio called; reject invalid requests. Respond immediately with an empty TwiML <Response/> (content-type text/xml), then process with after() from next/server, maxDuration 300. Download media from MediaUrl with HTTP Basic auth (TWILIO_ACCOUNT_SID:TWILIO_AUTH_TOKEN), following redirects.
+
+3. Sending with Twilio: use the Messages API (twilio package) from TWILIO_WHATSAPP_FROM to "whatsapp:+<digits>". Images, videos and PDFs are sent by public URL (our Supabase 'files' bucket is public). The Sandbox allows only 1 message every 3 seconds, so put all sends for one phone number through a small queue that waits at least 3.2 seconds between messages, and combine text where possible (the reply and the proposal list in one message).
+
+4. Approvals without buttons (Twilio only; keep Meta's buttons as they are): give each pending proposal in a reply a letter (A, B, C…), stored so the letter maps to the decision id for that phone number. End the message with: "Reply: yes A to approve · change A + what to change · no A to reject · yes all". Accept those replies case-insensitively, including Pidgin-friendly variants ("ok A", "approve A", "no be am A" = reject). If only one proposal is pending, accept plain "yes" / "no" / "change …". Unknown replies go to the team as a normal message.
+
+5. Update scripts/wa-simulate.ts with --provider twilio: build form-encoded Twilio payloads (text, and media using a public test image URL), sign them with X-Twilio-Signature for http://localhost:3000/api/twilio, and POST them. Add a test for "yes A".
+
+6. Add the four TWILIO_ and WHATSAPP_PROVIDER variables to .env.example. Run npm run build and the simulator for both providers, and tell me the exact Twilio webhook URL to paste in the Twilio Console.
+
 ## When WhatsApp unlocks
 
 1. Remove `WHATSAPP_DRY_RUN=1` from `.env.local` (it should never be set in Vercel).
