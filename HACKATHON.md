@@ -1,71 +1,114 @@
-# Naija AI Team — hackathon submission
+# Naija AI Team: built for my world
 
-Meta Global AI Developer Hackathon · Indie developer track · **Build for Your World** category · Building period Oct 26 – Nov 4, 2026.
+**Meta Global AI Developer Hackathon · Startup track · Problem statement: Build for Your World**
+*Bring Meta's models into your domain. Solve a problem you know firsthand, free up time and mental space, and make something possible that wasn't before.*
 
-**Everything in this repository was built during the hackathon.** The repository was created empty on Oct 26, 2026, and the git history shows every step.
+---
 
-## The idea and the problem
+## The problem I know firsthand
 
-I have carried this idea for a very long time, because I have lived the problem firsthand. I live in Nigeria. I have been to the markets, I have sat with traders and small-business owners, and I have asked them what is hard about running their business. As a digital skills trainer with Google Digital Skills for Africa, I have heard these problems directly from the people living them, over and over again:
+My wife sells on WhatsApp from home, and we have an 18-month-old baby.
 
-- The owner does everything: selling, record-keeping, marketing, pricing — mostly from memory, in a notebook, or not at all.
-- There is no affordable help. An accountant, a designer, a marketer each cost money a small shop does not have.
-- New apps do not stick. People are tired of downloading apps, registering, and learning new systems. Technology adoption is slow, and attention is already spent.
+Every day her business depends on things she has to make by hand, between feeding times, nap times and housework:
 
-This hackathon was the right opportunity to finally build something about it. And "Build for Your World" is exactly what this is: I am building for my world, from firsthand knowledge of the problem, for the people I have trained and traded beside.
+- **Posting to WhatsApp Status, every single day.** A Status disappears after 24 hours, so if she stops posting, sales stop.
+- **Shooting product videos, then editing them in CapCut.**
+- **Designing flyers in Canva.**
+- **Updating her catalogue** whenever stock or prices change.
+- **Replying to the same customer questions** ("How much?" "You dey deliver?") all day.
+- **Keeping track of sales and who owes her**, usually in her head or a notebook.
 
-## The solution
+That's four or five different apps and hours of work, for one small business, on top of looking after a family.
 
-**Naija AI Team** is an AI business team for Nigerian founders and small-business owners, delivered where they already are: on **WhatsApp**. An owner sends a text, voice note, photo or short shop video. An AI lead reads it, delegates to specialist teammates (books, products, flyers, promotions, and more), and replies with a short message plus **proposals** the owner approves, changes or rejects with one tap. Approved proposals become settled facts every teammate builds on. Nothing is done, sent, posted or paid for without approval.
+When I looked around, I saw the same thing everywhere:
 
-## Impact: time and mental space back
+- **The vendors I buy from on WhatsApp** live the same routine every day.
+- **Stay-at-home mums selling from the house** juggle content, customers and childcare at the same time.
+- **Market traders** work a full day serving customers face to face, and still have to keep their WhatsApp selling alive.
+- **Bulk traders at hubs like Farin Gada Market in Jos**, where buyers from other parts of Nigeria buy vegetables in large quantities, have to post prices that **change often**, because transport and fuel costs keep moving. Buyers far away decide from those posts.
 
-The point of this solution is to free up the two things a small-business owner never has enough of: **time and mental space**.
+All of this is done **manually**, at the end of long, tiring days.
 
-- No more end-of-day bookkeeping from memory: snap the sales notebook or forward a voice note, and the books are recorded, totalled, and answerable ("How did I do this week?", "Who owes me?").
-- No more blank page for marketing: product photos become cutouts, catalogues, flyers and promo videos the owner just approves.
-- No more guessing on compliance and pricing: answers grounded in sources, in naira, sized for small budgets.
+## What they told me
 
-Every one of those is an hour back, and one less thing carried in the owner's head.
+When I asked them whether they could stop doing this, the answer was always no: **their sales depend on it.** When I asked whether they would like something that takes these tasks off their hands, they were excited and glad.
 
-## Why WhatsApp — no new app, no onboarding
+Then came the same fear every time:
 
-This app is purposely meant to work **inside WhatsApp**. There is no app to download, no account to register, no new system to learn. Owners adopt it inside the ecosystem they already use every day, because that is the only adoption path that works here: people are tired of "one more app", and every registration screen loses them.
+> "We hope this is not another app we have to download. We hope we don't have to learn how to use another app."
 
-The numbers are why this bet is right: over **50 million people** use WhatsApp in Nigeria, and over **30 million** already leverage WhatsApp Business to sell their goods and services. The customers are already there. The sellers are already there. Naija AI Team simply joins the conversation.
+That one sentence shaped the whole design.
 
-## A note for judges: why there is a web demo
+## What we built
 
-The whole essence and scope of this product is WhatsApp. But a WhatsApp number is hard for judges to test fairly in a short review, so I built a separate landing page and a web **Try-it** page that runs the exact same team, agents and approval flow over the web. If you are judging this: open `/try`, assemble the team for a test business, and approve a proposal or two. Everything you see there is what happens inside WhatsApp.
+**No new app. No new skills. Just the WhatsApp they already use.**
 
-## Beyond the hackathon
+The owner sends what they already have, in the way they already talk:
 
-Meta is building AI agents for WhatsApp, and that is good news for this project, not competition for it. Naija AI Team is different in one important way: it is **Nigeria-first and business-deep** — an approval-driven team that keeps books, builds catalogues, cites compliance sources, and speaks the owner's language, shaped by firsthand knowledge of how this market actually works. That depth is also data: real usage showing how Nigerian sellers work with AI inside WhatsApp.
+| They send | They get back, ready to approve |
+|---|---|
+| A voice note, in English or Pidgin ("Tomato big basket 18k, carrot 25k per bag…") | A clear price board for Status and buyer groups |
+| Product photos | Clean product pictures and a catalogue with names and prices |
+| A short video of their shop or goods | A short vertical promo clip for Status and TikTok |
+| A photo of their sales notebook, a receipt or a transfer screenshot | Recorded sales, costs and debts, with unclear lines flagged instead of guessed |
+| "How did I do today?" | Sales, costs, profit, who owes them, and a monthly statement designed to share with a bank |
 
-I am very open to partnering with the Meta team to explore this — to learn from that usage together and to grow AI adoption among Nigerian businesses as Meta's AI agents arrive in Nigeria.
+**Nothing goes out without the owner's approval.** Every flyer, price, catalogue and record arrives as a proposal they approve, change or reject with one short reply. Approved items become settled facts the team builds on.
 
-## Before the hackathon
+## How it frees up time and mental space
 
-I explored the idea of an AI startup team in an earlier web prototype that used a workflow tool and a non-Meta model. **No code from that prototype is in this repository.** The agent role descriptions in `prompts/` were rewritten from that prototype's prompts for Nigerian small businesses, WhatsApp and Meta's models.
-
-## Built during the hackathon
-
-One line per build, newest first.
-
-| Date | What was built | Meta models used |
+| Task | Today | With Naija AI Team |
 |---|---|---|
-| Oct 27 | Product cutouts (SAM masks), products, 1080×1350 catalogue image, image previews on proposal cards | SAM 3.1, Muse Spark |
-| Oct 27 | Voice/image/video intake, Books ledger with server checks, `books_summary` and `who_owes_me` tools | Muse Spark, Muse Voice Transcribe, Muse Wonder |
-| Oct 27 | Agent team + run loop, landing and Try-it pages, WhatsApp webhook (onboarding, chat, approval buttons) | Muse Spark |
-| Oct 26 | Spec (`AGENTS.md`), Nigeria-first prompts for 7 agents (`prompts/`), database (`supabase/schema.sql`), Next.js scaffold | — |
+| Daily Status content | Shoot, edit in CapCut, design in Canva, post | Send a voice note or a video, approve, forward |
+| Catalogue updates | Photograph, crop and type each item | Send photos, confirm prices |
+| Price changes | Rewrite and resend the price list | One voice note |
+| Customer questions | Type the same answers all day | Ready replies to copy and send |
+| Bookkeeping | Memory, or a notebook nobody adds up | Snap the page; approve the entries |
+
+**Measured results from testers:** [add real timings and quotes from testers here before submitting]
+
+## What becomes possible that wasn't before
+
+- **A complete content and records team for a one-person business,** inside the app they already open a hundred times a day.
+- **Verified records from a paper notebook.** Every number in the statement links back to the photo or voice note it came from, and was confirmed by the owner. Only about 4% of Nigeria's small businesses get bank loans, and weak records are one of the reasons lenders give ([Leadership, citing Stears, May 2026](https://leadership.ng/only-4-of-nigerian-msmes-secure-bank-loans-amid-236bn-funding-gap-report/)).
+- **Daily prices that reach distant buyers faster,** for traders whose goods are perishable and whose prices change with the economy.
+
+---
 
 ## Meta models in this project
 
 | Model | What it does here |
 |---|---|
-| Muse Spark | CEO + specialists, function calling, structured proposals, reading photos |
-| Muse Wonder | Shop-video highlights, verbatim-transcript fallback |
-| Muse Voice Transcribe | WhatsApp voice notes to text |
-| Muse Image | Flyers and WhatsApp Status images (Prompt 11) |
-| SAM 3.1 | Cutting products out of photos for catalogues |
+| Muse Spark | The lead agent and specialist teammates: function calling, structured proposals, reading photos of notebooks, receipts and products |
+| Muse Wonder | Understanding shop videos and audio; picking the best moments for promo clips |
+| Muse Voice Transcribe | Voice notes to text |
+| Muse Image | Backgrounds for flyers and price boards (exact prices and words are added by our code, so they're never misspelt) |
+| SAM 3.1 | Cutting products out of photos for the catalogue |
+| Muse Spark Open (via Baseten) | Two teammates running on Meta's open weights |
 | Muse Code | Wrote most of the code in this repository |
+
+**About the WhatsApp connection:** the app is built for Meta's WhatsApp Cloud API. While our Meta business account was under review during the hackathon, we tested through Twilio's WhatsApp Sandbox, which also runs on WhatsApp. One setting (`WHATSAPP_PROVIDER`) switches between them.
+
+## Safety and privacy
+
+- The approval rule is enforced in code: agents can only create proposals; only the owner's reply confirms them.
+- Text read from photos, voice notes and videos is treated as data, never as instructions.
+- Records are not accounting or tax advice. The statement says it is designed to share with lenders, not audited.
+- Real testers' photos and voice notes are kept out of this public repository. Customer data follows the Nigeria Data Protection Act 2023.
+
+---
+
+## What was built during the hackathon
+
+**This repository was created empty on Oct 26, 2026, and everything in it was built during the hackathon.** The git history shows every step.
+
+**Before the hackathon:** I explored the idea of an AI startup team in an earlier web prototype that used a workflow tool and a non-Meta model. No code from that prototype is in this repository. The agent role descriptions in `prompts/` were rewritten from that prototype's prompts for Nigerian small businesses, WhatsApp and Meta's models.
+
+One line per day, newest first. Only list what is finished and working.
+
+| Date | What was built | Meta models used |
+|---|---|---|
+| [Oct 28-31] | [Baseten, Twilio configuration, testing and market validation/User testing] | |
+| Oct 27 | Noticeboard landing page (design and page code drafted with Claude); part 2 spec: books, media, catalogue, flyers, videos | — |
+| Oct 26–27 | App scaffold, Meta API connection, database, agent team, Try-it page, WhatsApp webhook with dry-run simulator (Prompts 0–6) | Muse Spark |
+| Oct 26 | Spec (`AGENTS.md`), Nigeria-first prompts for the teammates (`prompts/`), database (`supabase/schema.sql`) | — |
