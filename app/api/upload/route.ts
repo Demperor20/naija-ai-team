@@ -1,6 +1,11 @@
 import { after, NextResponse } from "next/server";
 import { getSessionCompanyId } from "@/lib/session";
-import { MediaError, processMedia } from "@/lib/media";
+import {
+  MAX_IMAGE_BYTES,
+  MAX_VIDEO_BYTES,
+  MediaError,
+  processMedia,
+} from "@/lib/media";
 import { runTeam } from "@/lib/agents/run";
 import { drainCompanyVideoJobs } from "@/lib/video";
 import {
@@ -50,6 +55,21 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { ok: false, error: RATE_LIMIT_MESSAGE },
       { status: 429 },
+    );
+  }
+  // Reject oversized uploads before buffering them into memory: photos
+  // over 10 MB, anything else over 16 MB (processMedia re-checks by type).
+  const uploadCap = file.type.startsWith("image/")
+    ? MAX_IMAGE_BYTES
+    : MAX_VIDEO_BYTES;
+  if (file.size > uploadCap) {
+    const capMb = Math.round(uploadCap / 1024 / 1024);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `That file is too big for me (over ${capMb} MB). Please send a smaller one.`,
+      },
+      { status: 400 },
     );
   }
   try {

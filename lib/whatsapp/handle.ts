@@ -322,6 +322,25 @@ async function handleText(
   await drainVideos(user.company_id);
 }
 
+// File proposals (catalogue, flyer, video, statement): send the approved
+// file ready to forward or post.
+async function sendApprovedFile(
+  provider: WhatsAppProvider,
+  phone: string,
+  companyId: string,
+  decisionTitle: string,
+  fileId: string | undefined,
+): Promise<void> {
+  if (!fileId) return;
+  const file = await getFile(fileId);
+  if (file && file.company_id === companyId) {
+    const caption = `${decisionTitle} — ready to forward or post.`;
+    await trySend(provider, phone, "approved-file", () =>
+      provider.sendMedia(phone, file.url, caption),
+    );
+  }
+}
+
 // One decision tap (Meta button) or letter command (Twilio), shared.
 async function decideById(
   provider: WhatsAppProvider,
@@ -345,21 +364,16 @@ async function decideById(
     );
     return true;
   }
+  // Any decisive tap supersedes a pending "What should change?" prompt:
+  // without this, the owner's next ordinary message would land as a note
+  // on the old proposal — even flipping an approval back to
+  // changes_requested.
+  await upsertWhatsappUser({ phone, awaitingNoteFor: null });
   await setDecisionStatus(companyId, decisionId, status, note);
   if (status === "approved") {
     try {
       const result = await applyDecision(companyId, decisionId);
-      // File proposals (catalogue, flyer, video, statement): send the
-      // approved file ready to forward or post.
-      if (result.fileId) {
-        const file = await getFile(result.fileId);
-        if (file && file.company_id === companyId) {
-          const caption = `${decision.title} — ready to forward or post.`;
-          await trySend(provider, phone, "approved-file", () =>
-            provider.sendMedia(phone, file.url, caption),
-          );
-        }
-      }
+      await sendApprovedFile(provider, phone, companyId, decision.title, result.fileId);
     } catch (err) {
       console.error(
         `whatsapp/${provider.id} apply failed for ${decisionId}:`,
@@ -436,11 +450,13 @@ async function handleLetterCommand(
   );
   if (!parsed) return false;
   if (parsed.action === "approveAll") {
+    await upsertWhatsappUser({ phone, awaitingNoteFor: null });
     let approved = 0;
     for (const d of pending) {
       await setDecisionStatus(companyId, d.decision_id, "approved");
       try {
-        await applyDecision(companyId, d.decision_id);
+        const result = await applyDecision(companyId, d.decision_id);
+        await sendApprovedFile(provider, phone, companyId, d.title, result.fileId);
         approved++;
       } catch (err) {
         console.error(

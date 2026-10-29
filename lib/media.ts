@@ -46,6 +46,9 @@ export interface ProcessedMedia {
   products?: VideoProduct[];
   highlights?: VideoHighlight[];
   ms: number;
+  // True when the file was stored but the AI description failed: the agent
+  // still runs, with a fallback description asking the owner to resend.
+  degraded?: boolean;
 }
 
 const EXT_BY_MIME: Record<string, string> = {
@@ -163,9 +166,32 @@ export async function processMedia(args: {
   });
 
   if (kind === "audio") {
-    const result = await transcribe(buffer, mime, {
-      keywords: businessKeywords(company.name),
-    });
+    let result: { text: string; via: string } | null = null;
+    try {
+      result = await transcribe(buffer, mime, {
+        keywords: businessKeywords(company.name),
+      });
+    } catch (err) {
+      console.error(
+        `[media] transcribe failed, keeping stored file: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!result) {
+      return {
+        fileId: file.id,
+        path,
+        url,
+        kind,
+        fileKind,
+        mime,
+        sizeBytes,
+        durationSec,
+        description:
+          "Voice note received but I could not hear it clearly (transcription failed). The audio is saved — ask the owner to type it out or resend a shorter note.",
+        degraded: true,
+        ms: Date.now() - started,
+      };
+    }
     const description = `Voice note transcript (${result.via === "websocket" ? "transcribed" : "transcribed (fallback)"}): "${result.text}"`;
     return {
       fileId: file.id,
@@ -183,7 +209,30 @@ export async function processMedia(args: {
   }
 
   if (kind === "image") {
-    const result = await describeImage(buffer, mime);
+    let result: { category: ImageCategory; description: string } | null = null;
+    try {
+      result = await describeImage(buffer, mime);
+    } catch (err) {
+      console.error(
+        `[media] describeImage failed, keeping stored file: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    if (!result) {
+      return {
+        fileId: file.id,
+        path,
+        url,
+        kind,
+        fileKind,
+        mime,
+        sizeBytes,
+        description:
+          "Photo received but I could not look at it (image analysis failed). The photo is saved — ask the owner what it shows or to resend it.",
+        category: "other",
+        degraded: true,
+        ms: Date.now() - started,
+      };
+    }
     return {
       fileId: file.id,
       path,
@@ -198,7 +247,34 @@ export async function processMedia(args: {
     };
   }
 
-  const result = await describeVideo(buffer, mime);
+  let result: {
+    products: VideoProduct[];
+    highlights: VideoHighlight[];
+    description: string;
+  } | null = null;
+  try {
+    result = await describeVideo(buffer, mime);
+  } catch (err) {
+    console.error(
+      `[media] describeVideo failed, keeping stored file: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (!result) {
+    return {
+      fileId: file.id,
+      path,
+      url,
+      kind,
+      fileKind,
+      mime,
+      sizeBytes,
+      durationSec,
+      description:
+        "Shop video received but I could not watch it (video analysis failed). The video is saved — ask the owner what it shows or to resend a shorter clip.",
+      degraded: true,
+      ms: Date.now() - started,
+    };
+  }
   const productLines = result.products.map((p) => `- ${p.name} (best at ${p.seconds}s)`);
   const highlightLines = result.highlights.map(
     (h) => `- ${h.start}s–${h.end}s: ${h.why}`,

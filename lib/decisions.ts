@@ -238,12 +238,15 @@ async function resolveSourceFileId(
   return null;
 }
 
-async function applyLedger(
+// Read-only half of the ledger apply: validates the payload and builds the
+// rows without writing anything, so validation errors throw before the
+// decision is claimed as applied.
+async function prepareLedgerRows(
   companyId: string,
   decisionId: string,
   messageId: string | null,
   payload: unknown,
-): Promise<number> {
+): Promise<NewLedgerEntry[]> {
   const validated = validateLedgerPayload(payload);
   if (validated.entries.length === 0) {
     throw new Error(
@@ -255,7 +258,7 @@ async function applyLedger(
     { message_id: messageId, payload },
     validated.fileId,
   );
-  const rows: NewLedgerEntry[] = validated.entries.map((e) => ({
+  return validated.entries.map((e) => ({
     decisionId,
     messageId,
     fileId,
@@ -269,8 +272,6 @@ async function applyLedger(
     paymentMethod: e.paymentMethod,
     confidence: e.confidence,
   }));
-  const inserted = await insertLedgerEntries(companyId, rows);
-  return inserted.length;
 }
 
 export async function applyDecision(
@@ -285,15 +286,18 @@ export async function applyDecision(
   if (decision.status !== "approved") return { applied: false, kind };
   if (decision.applied_at) return { applied: false, kind };
 
-  let inserted: number | undefined;
-  let fileId: string | undefined;
+  // Phase 1 — validate (reads only, no side effects). Errors here throw
+  // before anything is claimed, so a fix + re-approve can retry cleanly.
+  let ledgerRows: NewLedgerEntry[] | undefined;
+  let productIds: string[] | undefined;
+  let fileRef: string | undefined;
   switch (kind) {
     case "general":
       // Nothing else to do: the approved row itself is the effect the team
       // builds on. Claiming applied_at below records that it was applied.
       break;
     case "ledger": {
-      inserted = await applyLedger(
+      ledgerRows = await prepareLedgerRows(
         companyId,
         decisionId,
         decision.message_id,
@@ -311,7 +315,7 @@ export async function applyDecision(
       if (ids.length === 0) {
         throw new Error("product proposal has no product_ids.");
       }
-      inserted = await approveProducts(companyId, ids);
+      productIds = ids;
       break;
     }
     case "catalogue":
@@ -322,9 +326,11 @@ export async function applyDecision(
       const id =
         typeof payload?.file_id === "string" ? payload.file_id : "";
       if (!id) throw new Error(`${kind} proposal has no file_id.`);
-      const ok = await setFileApproved(companyId, id);
-      if (!ok) throw new Error(`${kind} file not found for this company.`);
-      fileId = id;
+      const file = await getFile(id);
+      if (!file || file.company_id !== companyId) {
+        throw new Error(`${kind} file not found for this company.`);
+      }
+      fileRef = id;
       break;
     }
     default:
@@ -334,6 +340,26 @@ export async function applyDecision(
       return { applied: false, kind };
   }
 
+  // Phase 2 — claim applied_at atomically. Two concurrent approves both
+  // pass the check above, but only one wins this conditional update; the
+  // loser returns unapplied with zero side effects, so ledger rows and
+  // product approvals can never be written twice.
   const claimed = await markDecisionApplied(companyId, decisionId);
-  return { applied: claimed, kind, inserted, fileId };
+  if (!claimed) return { applied: false, kind };
+
+  // Phase 3 — apply the validated plan. Failures here are rare (the plan
+  // was just validated) and are reported to the caller, which logs them.
+  let inserted: number | undefined;
+  let fileId: string | undefined;
+  if (ledgerRows) {
+    inserted = (await insertLedgerEntries(companyId, ledgerRows)).length;
+  }
+  if (productIds) {
+    inserted = await approveProducts(companyId, productIds);
+  }
+  if (fileRef) {
+    await setFileApproved(companyId, fileRef);
+    fileId = fileRef;
+  }
+  return { applied: true, kind, inserted, fileId };
 }

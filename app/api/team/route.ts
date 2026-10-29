@@ -1,6 +1,8 @@
 import { after, NextResponse } from "next/server";
 import {
+  getDecision,
   getRecentMessages,
+  isUuid,
   listDecisions,
   setDecisionStatus,
   type DecisionStatus,
@@ -145,6 +147,18 @@ export async function POST(request: Request) {
         if (typeof status !== "string" || !DECIDE_STATUSES.includes(status)) {
           return NextResponse.json(
             { ok: false, error: "Please choose Approve, Change or Reject." },
+            { status: 400 },
+          );
+        }
+        // Confirm the proposal belongs to this company first (same as the
+        // dashboard route): without this a bogus id throws inside
+        // setDecisionStatus and the owner sees a 500 instead of "not found".
+        const existing =
+          isUuid(decisionId) &&
+          (await getDecision(companyId, decisionId).catch(() => null));
+        if (!existing) {
+          return NextResponse.json(
+            { ok: false, error: "That proposal was not found." },
             { status: 400 },
           );
         }

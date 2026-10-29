@@ -32,9 +32,12 @@ function authToken(): string {
 }
 
 function whatsappFrom(): string {
-  const v = process.env.TWILIO_WHATSAPP_FROM;
+  const v = (process.env.TWILIO_WHATSAPP_FROM ?? "").trim();
   if (!v) throw new Error("Missing TWILIO_WHATSAPP_FROM environment variable");
-  return v;
+  // Twilio requires the whatsapp: prefix; add it when the env value is a
+  // bare number so sending still works instead of failing per message.
+  if (/^whatsapp:/i.test(v)) return v;
+  return `whatsapp:${v}`;
 }
 
 let cachedClient: ReturnType<typeof twilio> | null = null;
@@ -65,6 +68,21 @@ export function twilioWebhookUrl(request: Request): string {
     headers.get("x-forwarded-proto") ??
     new URL(request.url).protocol.replace(/:$/, "");
   return `${proto}://${host}/api/twilio`;
+}
+
+// Twilio signs the URL exactly as pasted in the Console. A trailing slash
+// there (…/api/twilio/) would otherwise 403 every delivery, so validate
+// against each plausible spelling. Extra candidates are safe: without the
+// auth token an attacker can't forge any of them.
+function twilioWebhookCandidates(request: Request): string[] {
+  const primary = twilioWebhookUrl(request);
+  const out = [primary];
+  const withSlash = primary.endsWith("/") ? primary.slice(0, -1) : `${primary}/`;
+  out.push(withSlash);
+  if (request.url !== primary && request.url !== withSlash) {
+    out.push(request.url);
+  }
+  return [...new Set(out)];
 }
 
 type TwilioMediaKind = "audio" | "image" | "video";
@@ -108,7 +126,11 @@ async function parseIncoming(request: Request): Promise<IncomingMessage[]> {
     if (typeof value === "string") params[key] = value;
   }
   const signature = request.headers.get("x-twilio-signature") ?? "";
-  if (!validateRequest(authToken(), signature, twilioWebhookUrl(request), params)) {
+  const token = authToken();
+  const valid = twilioWebhookCandidates(request).some((url) =>
+    validateRequest(token, signature, url, params),
+  );
+  if (!valid) {
     throw new ProviderHttpError(403, "forbidden");
   }
   const from = digitsOnly(params.From ?? "");
@@ -172,14 +194,31 @@ async function enqueueSend(phone: string, fn: () => Promise<void>): Promise<void
   await next;
 }
 
+// One retry inside the queue slot: sandbox sends occasionally 429/5xx on
+// the first attempt, and the retry still respects the 3.2 s spacing
+// because it runs within this phone's serialized chain.
+async function sendWithOneRetry(fn: () => Promise<void>): Promise<void> {
+  try {
+    await fn();
+  } catch (first) {
+    console.warn(
+      `[twilio] send failed, retrying once: ${first instanceof Error ? first.message : String(first)}`,
+    );
+    await sleep(SEND_GAP_MS);
+    await fn();
+  }
+}
+
 async function sendText(to: string, text: string): Promise<void> {
   for (const chunk of splitText(text, TWILIO_TEXT_LIMIT)) {
     await enqueueSend(digitsOnly(to), () =>
-      client().messages.create({
-        from: whatsappFrom(),
-        to: toWhatsApp(to),
-        body: chunk,
-      }).then(() => {}),
+      sendWithOneRetry(() =>
+        client().messages.create({
+          from: whatsappFrom(),
+          to: toWhatsApp(to),
+          body: chunk,
+        }).then(() => {}),
+      ),
     );
   }
 }
@@ -190,14 +229,16 @@ async function sendMedia(
   caption?: string,
 ): Promise<void> {
   await enqueueSend(digitsOnly(to), () =>
-    client()
-      .messages.create({
-        from: whatsappFrom(),
-        to: toWhatsApp(to),
-        ...(caption ? { body: caption } : {}),
-        mediaUrl: [publicUrl],
-      })
-      .then(() => {}),
+    sendWithOneRetry(() =>
+      client()
+        .messages.create({
+          from: whatsappFrom(),
+          to: toWhatsApp(to),
+          ...(caption ? { body: caption } : {}),
+          mediaUrl: [publicUrl],
+        })
+        .then(() => {}),
+    ),
   );
 }
 
