@@ -24,6 +24,9 @@ export interface ProposalSummary {
   decision_id: string;
   title: string;
   description: string;
+  // Public file URL for file proposals (flyer, catalogue, video,
+  // statement); null when the proposal has no file to preview.
+  previewUrl?: string | null;
 }
 
 export interface WhatsAppProvider {

@@ -9,8 +9,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: ["ffmpeg-static"],
   outputFileTracingIncludes: {
     "/api/team": ["./prompts/**/*", "./assets/**/*"],
-    "/api/start": ["./prompts/**/*"],
+    "/api/start": ["./prompts/**/*", "./assets/**/*"],
     "/api/whatsapp": ["./prompts/**/*", "./assets/**/*"],
+    "/api/twilio": ["./prompts/**/*", "./assets/**/*"],
     "/api/upload": ["./prompts/**/*", "./assets/**/*"],
   },
   turbopack: {

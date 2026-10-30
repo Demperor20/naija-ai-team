@@ -26,6 +26,7 @@ import {
 } from "../rate-limit";
 import {
   buildProposalList,
+  letterFor,
   parseLetterCommand,
   readLetters,
   storeLetters,
@@ -66,6 +67,47 @@ function dashboardUrlFor(accessToken: string): string {
   return `/d/${accessToken}`;
 }
 
+// The holding message goes out only when the team is slow: quick answers
+// arrive alone (no weird "Got it" in reply to a question), while work past
+// HOLD_AFTER_MS still reassures the owner that something is happening.
+const HOLD_AFTER_MS = 15_000;
+const HOLD_MESSAGE = "Got it — the team is on it.";
+
+// Exported for scripts/hold-smoke.ts.
+export async function withHoldMessage<T>(
+  task: () => Promise<T>,
+  onHold: () => Promise<void>,
+  holdAfterMs: number,
+): Promise<T> {
+  let holdPromise: Promise<void> | null = null;
+  const timer = setTimeout(() => {
+    holdPromise = onHold();
+  }, holdAfterMs);
+  if (typeof timer.unref === "function") timer.unref();
+  try {
+    return await task();
+  } finally {
+    clearTimeout(timer);
+    // The hold fired: wait for it so it always lands before the reply.
+    if (holdPromise) await holdPromise;
+  }
+}
+
+async function runTeamWithHold(
+  provider: WhatsAppProvider,
+  phone: string,
+  args: Parameters<typeof runTeam>[0],
+): Promise<Awaited<ReturnType<typeof runTeam>>> {
+  return withHoldMessage(
+    () => runTeam(args),
+    () =>
+      trySend(provider, phone, "ack", () =>
+        provider.sendText(phone, HOLD_MESSAGE),
+      ),
+    HOLD_AFTER_MS,
+  );
+}
+
 export async function handleIncoming(
   provider: WhatsAppProvider,
   message: IncomingMessage,
@@ -99,7 +141,8 @@ export async function handleIncoming(
   }
 }
 
-async function sendReplyWithProposals(
+// Exported for scripts/whatsapp-preview-smoke.ts.
+export async function sendReplyWithProposals(
   provider: WhatsAppProvider,
   phone: string,
   reply: string,
@@ -118,6 +161,19 @@ async function sendReplyWithProposals(
     await trySend(provider, phone, "reply", () =>
       provider.sendText(phone, `${reply}\n\n${built.text}`),
     );
+    // File previews, one message each, captioned with the proposal letter
+    // so the owner can look before answering yes/no. Best-effort: a file
+    // the Sandbox refuses (e.g. an oversized video) is skipped, never fatal.
+    for (let i = 0; i < decisions.length; i++) {
+      const preview = decisions[i].previewUrl;
+      if (!preview) continue;
+      const caption =
+        `${letterFor(i)}. ${decisions[i].title} — preview. ` +
+        `Reply yes ${letterFor(i)} to approve, no ${letterFor(i)} to reject.`;
+      await trySend(provider, phone, "preview", () =>
+        provider.sendMedia(phone, preview, caption),
+      );
+    }
     return;
   }
   await trySend(provider, phone, "reply", () => provider.sendText(phone, reply));
@@ -220,9 +276,6 @@ async function handleMedia(
       provider.sendText(phone, `I heard: "${processed.transcript}"`),
     );
   }
-  await trySend(provider, phone, "ack", () =>
-    provider.sendText(phone, "Got it — the team is on it."),
-  );
   const caption = message.caption?.trim();
   const fallbackText =
     processed.kind === "audio"
@@ -230,7 +283,7 @@ async function handleMedia(
       : processed.kind === "video"
         ? "(Sent a video)"
         : "(Sent a photo)";
-  const result = await runTeam({
+  const result = await runTeamWithHold(provider, phone, {
     companyId: user.company_id,
     channelId: "whatsapp",
     message: caption || fallbackText,
@@ -309,10 +362,7 @@ async function handleText(
     await drainVideos(user.company_id);
     return;
   }
-  await trySend(provider, phone, "ack", () =>
-    provider.sendText(phone, "Got it — the team is on it."),
-  );
-  const result = await runTeam({
+  const result = await runTeamWithHold(provider, phone, {
     companyId: user.company_id,
     channelId: "whatsapp",
     message: body,

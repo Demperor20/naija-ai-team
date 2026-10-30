@@ -120,7 +120,7 @@ Look and feel: clean, calm and trustworthy. Off-white background, deep green acc
 - Return HTTP 200 within a few seconds; do the work afterwards with `after()` from `next/server`.
 - Verify `X-Hub-Signature-256` with `WHATSAPP_APP_SECRET` on every POST.
 - Skip duplicate deliveries using `whatsapp_seen`.
-- Send "Got it — the team is on it." immediately, then the real reply.
+- Send the holding message ("Got it — the team is on it.") only when the reply takes longer than ~15 s; quick answers arrive alone, then the real reply.
 - Formatting: `*bold*`, `_italic_`, plain lists; no markdown tables or `#` headings; split messages over 4,096 characters.
 - Each proposal is one interactive message with 3 reply buttons, `Approve`, `Change` and `Reject` (≤ 20 characters each), with ids `<decisionId>:approved`, `:changes_requested` and `:rejected`. "Change" asks "What should change?" and saves the next text as `owner_note`.
 - A new phone number goes through onboarding (4 questions, one at a time), then the kickoff, then a message with the owner's dashboard link.
