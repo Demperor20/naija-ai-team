@@ -501,6 +501,8 @@ export async function handleMakeFlyer(
     return { flyer_file_id: saved.fileId, url: saved.url };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
+    // The chat only shows the model's paraphrase; log the real cause here.
+    console.error(`make_flyer failed for company ${companyId}: ${detail}`);
     return { error: `make_flyer failed: ${detail}` };
   }
 }
