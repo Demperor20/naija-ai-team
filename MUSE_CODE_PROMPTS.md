@@ -218,10 +218,6 @@ Add Twilio's WhatsApp Sandbox as a second WhatsApp provider, chosen by WHATSAPP_
 3. Check the webhook is verified and subscribed to **messages**, and the app is published.
 4. Message the number from your phone and run the same flows as the smoke scripts: notebook photo, voice note, product photos, shop video.
 
-## Saving progress (after every passing check)
+## Prompt 16: two teammates on Meta open weights via Baseten
+Add Meta's open-weight model Muse Spark Open, served by Baseten, as a second provider inside lib/meta.ts. All model calls stay in lib/meta.ts; update AGENTS.md rule 1 to read: "Every AI call uses a Meta model: through the Meta Model API, or Meta open-weight models served by Baseten." Use Baseten's OpenAI-compatible chat completions API per their docs, with BASETEN_BASE_URL, BASETEN_API_KEY and the model meta-models/muse-spark-open-1026 (the hackathon's required ID). Add a provider setting per agent in lib/agents/team.ts and run the sales (Prices & Customers) and product (Plans) specialists on Baseten. If a Baseten call fails or times out, retry once on the Meta API with META_TEXT_MODEL and record that it fell back. Save the provider and model of every call in agent_runs so the dashboard trace shows which teammates ran on open weights. Extend scripts/team-smoke.ts to print the provider per step. Run npm run build and the smoke test, and show me the output.
 
-Ask Muse Code:
-```
-Commit all changes with a short clear message and push to GitHub. Do not commit .env.local or test-media/.
-```
-Then add one line for today to the table in HACKATHON.md, including which Meta models the new part uses.

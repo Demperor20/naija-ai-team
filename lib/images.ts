@@ -7,8 +7,16 @@ import sharp, { type OverlayOptions } from "sharp";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import * as opentype from "opentype.js";
+import * as opentypeNs from "opentype.js";
 import type { SegmentInstance } from "./meta";
+
+// opentype.js is CommonJS without statically detectable named exports, so
+// under Node's ESM loader the namespace above holds only `default` and
+// `opentypeNs.parse` is undefined (bundlers expose both shapes). Normalise
+// so `opentype.parse` works in every runtime.
+const opentype: typeof opentypeNs =
+  (opentypeNs as unknown as { default?: typeof opentypeNs }).default ??
+  opentypeNs;
 
 // --- Brand -----------------------------------------------------------------
 
@@ -30,7 +38,7 @@ export const DEFAULT_BRAND: BrandColours = {
 
 // --- Embedded fonts ----------------------------------------------------------
 
-const fontCache = new Map<string, opentype.Font>();
+const fontCache = new Map<string, opentypeNs.Font>();
 
 function fontCandidates(name: string): string[] {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -40,9 +48,10 @@ function fontCandidates(name: string): string[] {
   ];
 }
 
-function loadFont(file: string): opentype.Font {
+function loadFont(file: string): opentypeNs.Font {
   const hit = fontCache.get(file);
   if (hit) return hit;
+  let cause = "unknown error";
   for (const path of fontCandidates(file)) {
     try {
       // turbopackIgnore: assets/fonts is shipped via outputFileTracingIncludes.
@@ -51,17 +60,20 @@ function loadFont(file: string): opentype.Font {
       );
       fontCache.set(file, font);
       return font;
-    } catch {
-      // Try the next candidate.
+    } catch (err) {
+      // Keep the underlying reason (missing file vs unparsable font) so the
+      // thrown error below points at the real problem, then try the next
+      // candidate.
+      cause = err instanceof Error ? err.message : String(err);
     }
   }
   throw new Error(
-    `images: cannot load font ${file} (tried ${fontCandidates(file).join(", ")})`,
+    `images: cannot load font ${file} (${cause}; tried ${fontCandidates(file).join(", ")})`,
   );
 }
 
-const anton = (): opentype.Font => loadFont("Anton-Regular.ttf");
-const workSans = (): opentype.Font => loadFont("WorkSans-Variable.ttf");
+const anton = (): opentypeNs.Font => loadFont("Anton-Regular.ttf");
+const workSans = (): opentypeNs.Font => loadFont("WorkSans-Variable.ttf");
 
 function naira(n: number): string {
   return `₦${n.toLocaleString("en-NG")}`;
@@ -78,7 +90,7 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
 // One line of text as an SVG path element, horizontally centred on cx with
 // the given baseline. Faux-bold via a thin same-colour stroke.
 function textPath(
-  font: opentype.Font,
+  font: opentypeNs.Font,
   text: string,
   cx: number,
   baseline: number,
@@ -107,7 +119,7 @@ function round2(v: number): number {
 // by default, and its rounder turns float-dust remainders (1e-14) into NaN
 // via string exponent concatenation ("1e-14e+2"), which silently kills the
 // rest of the path in the renderer.
-function pathToSvgData(path: opentype.Path): string {
+function pathToSvgData(path: opentypeNs.Path): string {
   let d = "";
   for (const cmd of path.commands) {
     if (cmd.type === "M") {
@@ -126,7 +138,7 @@ function pathToSvgData(path: opentype.Path): string {
 }
 
 function fitText(
-  font: opentype.Font,
+  font: opentypeNs.Font,
   text: string,
   fontSize: number,
   maxWidth: number,
@@ -146,7 +158,7 @@ function fitText(
 
 // Greedy word wrap to at most maxLines; an ellipsis marks dropped words.
 function wrapLines(
-  font: opentype.Font,
+  font: opentypeNs.Font,
   text: string,
   fontSize: number,
   maxWidth: number,
@@ -185,7 +197,7 @@ function wrapLines(
 
 // Largest size at which text fits one line; clips only past the smallest.
 function shrinkToFit(
-  font: opentype.Font,
+  font: opentypeNs.Font,
   text: string,
   sizes: number[],
   maxWidth: number,
@@ -201,7 +213,7 @@ function shrinkToFit(
 
 // Largest size at which text wraps without dropping words.
 function shrinkWrap(
-  font: opentype.Font,
+  font: opentypeNs.Font,
   text: string,
   sizes: number[],
   maxWidth: number,
