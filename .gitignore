@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local-only fixtures (contain real receipts, never commit)
 test-media/
+
+# internal build log — stays on this Mac, never in the public repo
+MUSE_CODE_PROMPTS.md

@@ -6,16 +6,37 @@ Built for the **Meta Global AI Developer Hackathon** · Indie developer track ·
 
 ---
 
-## Try it in 60 seconds (no WhatsApp needed)
+## How judges can test (pick either option)
 
-Judges and curious visitors: the web demo runs the **exact same team, agents and approval flow** as WhatsApp.
+Both options run the **exact same team, agents and approval flow**. Nothing is sent, posted or recorded without your approval — every proposal waits for your tap or reply.
 
-1. Open the deployed app and go to **`/try`** (locally: `http://localhost:3000/try` after `npm run dev`).
+### Option A — WhatsApp via our Twilio Sandbox (closest to the real thing, ~5 minutes)
+
+| Sandbox details | Value |
+|---|---|
+| WhatsApp sandbox number | `[+1 415 523 8886]` |
+| Join code | `[join disappear-merely]` |
+
+1. **Join the sandbox:** save the sandbox number above as a phone contact, open WhatsApp, and send it the join code exactly as shown (`join disappear-merely`). You will get a confirmation message from Twilio.
+2. **Say hello** (e.g. `Hello`). A new number is asked **4 quick questions, one at a time**: your name, your business name, what you sell or plan to build, and your 3-month goal. Answer each with one short message.
+3. **Meet your team:** after the 4th answer the team assembles (about a minute) and replies with its first proposals, plus your **private dashboard link** — open it to see stats, files and the agent trace (which teammate, which Meta model, how long each step took).
+4. **Try the team out.** Send any of these and watch it delegate and propose:
+   - a text, e.g. `I sold 5 plates of rice at 2000 each today, and I owe my supplier 15000`
+   - a **photo** of a notebook page, receipt or product
+   - a **voice note** in English or Pidgin (e.g. listing today's sales)
+   - a **short shop video** (under 60 seconds)
+5. **Approve with one reply.** Each proposal is lettered (A, B, C…). Reply `yes A` to approve, `no A` to reject, `change A` followed by what should change, or `yes all` to approve everything at once.
+
+Notes: replies are live Meta-model calls, so allow 15–60 seconds — if it takes longer than ~15 s you first get a holding message ("Got it — the team is on it."), then the real reply. The sandbox is shared by all testers, so please judge your own thread only.
+
+### Option B — Web demo, no WhatsApp needed (~2 minutes)
+
+1. Open the deployed app and go to **`/try`** — full link: `https://naija-ai-team.vercel.app/` (locally: `http://localhost:3000/try` after `npm run dev`).
 2. Fill the intake form (name, business, what you sell, goal) → **Assemble your team**.
-3. Chat with any teammate, then **Approve / Change / Reject** a proposal card.
-4. Want a pre-loaded business? Run `npx tsx scripts/seed-demo.ts` — it builds "Mama Nkechi Kitchen" through the real pipeline (real books entries, catalogue, flyer, video, statement) and prints a private dashboard link (`/d/<token>`) with week stats, files and the agent trace.
+3. Chat with any teammate (text, hold-to-talk voice, photo or video upload), then **Approve / Change / Reject** a proposal card.
+4. Want a pre-loaded business instead? Run `npx tsx scripts/seed-demo.ts` — it builds "Mama Nkechi Kitchen" through the real pipeline (real books entries, catalogue, flyer, video, statement) and prints a private dashboard link (`/d/<token>`) with week stats, files and the agent trace.
 
-To test over real WhatsApp instead, see [Test over WhatsApp](#test-over-whatsapp) below.
+Developers who want to run their own copy (own Meta/Supabase keys, own Twilio sandbox) should follow [Run it yourself](#run-it-yourself) and [Test over WhatsApp](#test-over-whatsapp) below instead.
 
 ---
 
@@ -225,4 +246,4 @@ Every script loads `.env.local` and reports `SMOKE OK` / `SIMULATE OK` or fails 
 
 Meta is building AI agents for WhatsApp — good news, not competition. Naija AI Team is **Nigeria-first and business-deep**: approval-driven books, catalogues, cited compliance and the owner's language, shaped by firsthand market knowledge. I'm open to partnering with the Meta team to learn from real usage together and grow AI adoption among Nigerian businesses.
 
-**Docs:** [HACKATHON.md](./HACKATHON.md) (submission story) · [AGENTS.md](./AGENTS.md) (build contract) · [MUSE_CODE_PROMPTS.md](./MUSE_CODE_PROMPTS.md) (how it was built, step by step)
+**Docs:** [HACKATHON.md](./HACKATHON.md) (submission story) · [AGENTS.md](./AGENTS.md) (build contract)

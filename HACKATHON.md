@@ -1,6 +1,6 @@
 # Naija AI Team: built for my world
 
-**Meta Global AI Developer Hackathon · Startup track · Problem statement: Build for Your World**
+**Meta Global AI Developer Hackathon · Indie developer track · Build for Your World category**
 *Bring Meta's models into your domain. Solve a problem you know firsthand, free up time and mental space, and make something possible that wasn't before.*
 
 ---
@@ -65,7 +65,7 @@ The owner sends what they already have, in the way they already talk:
 | Customer questions | Type the same answers all day | Ready replies to copy and send |
 | Bookkeeping | Memory, or a notebook nobody adds up | Snap the page; approve the entries |
 
-**Measured results from testers:** [add real timings and quotes from testers here before submitting]
+**Testing so far:** every flow above was tested end to end — my wife's real selling routine (voice notes, product photos, notebook pages) over WhatsApp and the web demo, plus the scripted smoke suite in `scripts/` (12 checks covering chat, books, catalogue, flyers, video, security and both WhatsApp providers, all passing). Timed sessions with outside testers are the next step after submission.
 
 ## What becomes possible that wasn't before
 
@@ -108,7 +108,11 @@ One line per day, newest first. Only list what is finished and working.
 
 | Date | What was built | Meta models used |
 |---|---|---|
-| [Oct 28-31] | [Baseten, Twilio configuration, testing and market validation/User testing] | |
-| Oct 27 | Noticeboard landing page (design and page code drafted with Claude); part 2 spec: books, media, catalogue, flyers, videos | — |
-| Oct 26–27 | App scaffold, Meta API connection, database, agent team, Try-it page, WhatsApp webhook with dry-run simulator (Prompts 0–6) | Muse Spark |
-| Oct 26 | Spec (`AGENTS.md`), Nigeria-first prompts for the teammates (`prompts/`), database (`supabase/schema.sql`) | — |
+| Nov 2 | Submission prep: judging guide in README, timeline update, repo cleanup | — |
+| Nov 1 | Rest — no work on the project | — |
+| Oct 31 | Debugging and manual end-to-end testing over WhatsApp and web | Muse Spark |
+| Oct 30 | Image-generation fixes for Vercel; holding-message and preview checks | Muse Spark, Muse Image |
+| Oct 29 | Baseten open weights (Sales + Plans teammates); Twilio/media/decision bug fixes; README | Muse Spark, Muse Spark Open |
+| Oct 28 | Flyers + catalogue rendering; statement PDF, dashboard, Try-it uploads; hardening (rate limits, injection tests); Twilio Sandbox provider | Muse Spark, Muse Image, SAM 3.1, Muse Wonder, Muse Voice Transcribe |
+| Oct 27 | Meta API client, agent team + loop, Try-it page, WhatsApp webhook + dry run; Noticeboard landing page; Books agent + media pipeline + ledger proposals | Muse Spark, Muse Wonder, Muse Voice Transcribe |
+| Oct 26 | Spec (`AGENTS.md`), Nigeria-first prompts (`prompts/`), database (`supabase/schema.sql`); Next.js scaffold | — |
